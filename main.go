@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -62,6 +61,7 @@ type app struct {
 
 	slackClient *slackClient
 	redis       radix.Client
+	stellar     *stellar
 }
 
 const balancesKey = "balances"
@@ -237,13 +237,13 @@ func (a *app) spin() {
 	for {
 		e := <-a.slackClient.RTM.IncomingEvents
 
-		{
-			b, err := json.MarshalIndent(e, "", "  ")
-			if err != nil {
-				panic(err)
-			}
-			fmt.Printf("got message: %s\n", string(b))
-		}
+		//{
+		//	b, err := json.MarshalIndent(e, "", "  ")
+		//	if err != nil {
+		//		panic(err)
+		//	}
+		//	fmt.Printf("got message: %s\n", string(b))
+		//}
 
 		switch e.Type {
 		case "reaction_added":
@@ -287,6 +287,7 @@ func main() {
 	a.users = map[string]*slack.User{}
 	ctx, a.slackClient = withSlackClient(ctx)
 	ctx, a.redis = withRedis(ctx)
+	ctx, a.stellar = withStellar(ctx)
 	a.ctx = ctx
 	ctx = mrun.WithStartHook(ctx, func(context.Context) error {
 		go a.spin()
