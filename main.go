@@ -14,6 +14,7 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/mediocregopher/radix/v3"
 	"github.com/nlopes/slack"
+	"github.com/stellar/go/keypair"
 )
 
 type slackClient struct {
@@ -281,6 +282,26 @@ func (a *app) spin() {
 
 func main() {
 	ctx := m.ServiceContext()
+
+	// for convenience, add a keygen option which will generate a new key, print
+	// it, then exit
+	var keygen *bool
+	ctx, keygen = mcfg.WithBool(ctx, "key-gen", "If set, generate a new stellar seed/address, print them, then exit")
+	ctx = mrun.WithStartHook(ctx, func(innerCtx context.Context) error {
+		if !*keygen {
+			return nil
+		}
+		pair, err := keypair.Random()
+		if err != nil {
+			return merr.Wrap(err, ctx, innerCtx)
+		}
+
+		mlog.Info("keypair generated", mctx.Annotate(ctx,
+			"address", pair.Address(),
+			"seed", pair.Seed(),
+		))
+		return merr.New("exiting due to key-gen param", ctx, innerCtx)
+	})
 
 	var a app
 	a.channels = map[string]*slack.Channel{}
