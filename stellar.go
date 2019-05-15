@@ -13,6 +13,7 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mhttp"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
+	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/strkey"
@@ -131,4 +132,26 @@ func (s *stellar) federationHandler(rw http.ResponseWriter, r *http.Request) {
 		"stellar_address": q,
 		"account_id":      s.kp.Address(),
 	})
+}
+
+func (s *stellar) receiveTxs(ctx context.Context, lastCursor string) <-chan horizon.Transaction {
+	ch := make(chan horizon.Transaction)
+	go func() {
+		defer close(ch)
+		for {
+			req := horizonclient.TransactionRequest{
+				ForAccount: s.kp.Address(),
+				Cursor:     lastCursor,
+			}
+			err := s.client.StreamTransactions(ctx, req, func(tx horizon.Transaction) {
+				ch <- tx
+				lastCursor = tx.PT
+			})
+			if err == context.Canceled {
+				return
+			}
+			mlog.Warn("error while streaming transactions", s.ctx, ctx, merr.Context(err))
+		}
+	}()
+	return ch
 }

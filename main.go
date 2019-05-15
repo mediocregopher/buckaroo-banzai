@@ -14,6 +14,7 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/mediocregopher/radix/v3"
 	"github.com/nlopes/slack"
+	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/keypair"
 )
 
@@ -118,7 +119,7 @@ var giveCmd = radix.NewEvalScript(1, `
 	return "OK"
 `)
 
-func (a *app) processMsg(channelID, userID, msg string) error {
+func (a *app) processSlackMsg(channelID, userID, msg string) error {
 	ctx := mctx.Annotate(a.ctx, "channelID", channelID)
 	channel, err := a.getChannel(channelID)
 	if err != nil {
@@ -234,47 +235,93 @@ func (a *app) processMsg(channelID, userID, msg string) error {
 	return nil
 }
 
-func (a *app) spin() {
+func (a *app) processSlackEvent(e slack.RTMEvent) {
+	ctx := a.ctx
+	//{
+	//	b, err := json.MarshalIndent(e, "", "  ")
+	//	if err != nil {
+	//		panic(err)
+	//	}
+	//	fmt.Printf("got message: %s\n", string(b))
+	//}
+
+	switch e.Type {
+	case "reaction_added":
+		data, ok := e.Data.(*slack.ReactionAddedEvent)
+		if !ok || data.User == data.ItemUser {
+			return
+		}
+		ctx = mctx.Annotate(ctx, "user", data.ItemUser)
+		mlog.Info("incrementing user's balance", ctx)
+		if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "1")); err != nil {
+			mlog.Error("error incrementing user's balance", ctx, merr.Context(err))
+		}
+	case "reaction_removed":
+		data, ok := e.Data.(*slack.ReactionRemovedEvent)
+		if !ok || data.User == data.ItemUser {
+			return
+		}
+		ctx := mctx.Annotate(a.ctx, "user", data.ItemUser)
+		mlog.Info("decrementing user's balance", ctx)
+		if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "-1")); err != nil {
+			mlog.Error("error decrementing user's balance", ctx, merr.Context(err))
+		}
+	case "message":
+		data, ok := e.Data.(*slack.MessageEvent)
+		if !ok {
+			return
+		}
+		if err := a.processSlackMsg(data.Channel, data.User, data.Text); err != nil {
+			ctx := mctx.Annotate(a.ctx, "text", data.Text)
+			mlog.Warn("error processing message", ctx, merr.Context(err))
+		}
+	}
+}
+
+func (a *app) processStellarTx(tx horizon.Transaction) {
+	ctx := mctx.Annotate(a.ctx,
+		"txID", tx.ID, "txCursor", tx.PT, "txHash", tx.Hash,
+		"txSrcAccount", tx.Account, "txFee", tx.FeePaid, "txMemo", tx.Memo)
+	mlog.Info("processing incoming stellar transaction", ctx)
+
+	suffix := "*" + a.stellar.domain
+	if !strings.HasSuffix(tx.Memo, suffix) {
+		// if they don't fill the memo correctly, don't distribute the money.
+		mlog.Warn("incoming stellar transaction has invalid memo", ctx)
+		return
+	}
+
+	userID := strings.TrimSuffix(tx.Memo, suffix)
+	if user, err := a.getUser(userID); err != nil {
+		mlog.Warn("error retrieving user info, couldn't distribute money", ctx, merr.Context(err))
+		return
+	} else if user == nil { // not sure if this happens, but whatevs
+		mlog.Warn("incoming stellar transaction destined for invalid user", ctx)
+	}
+
+	// TODO determine if the transaction contained any CRYPTICBUCKs (or whatever
+	// the currency is). Look in the tx's operations link, see:
+	// https://horizon-testnet.stellar.org/transactions/d9b1a716f844104e0ff27ec285e5bc91a33ebb4f63adb481478007e1efac26d4
+	// https://horizon-testnet.stellar.org/transactions/d9b1a716f844104e0ff27ec285e5bc91a33ebb4f63adb481478007e1efac26d4/operations
+	// https://horizon-testnet.stellar.org/operations/190417375076353
+
+	// TODO increment account balance
+}
+
+const lastCursorKey = "lastCursor"
+
+func (a *app) spin(lastCursor string) {
+	txCh := a.stellar.receiveTxs(a.ctx, lastCursor)
 	for {
-		e := <-a.slackClient.RTM.IncomingEvents
-
-		//{
-		//	b, err := json.MarshalIndent(e, "", "  ")
-		//	if err != nil {
-		//		panic(err)
-		//	}
-		//	fmt.Printf("got message: %s\n", string(b))
-		//}
-
-		switch e.Type {
-		case "reaction_added":
-			data, ok := e.Data.(*slack.ReactionAddedEvent)
-			if !ok || data.User == data.ItemUser {
-				continue
-			}
-			ctx := mctx.Annotate(a.ctx, "user", data.ItemUser)
-			mlog.Info("incrementing user's balance", ctx)
-			if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "1")); err != nil {
-				mlog.Error("error incrementing user's balance", ctx, merr.Context(err))
-			}
-		case "reaction_removed":
-			data, ok := e.Data.(*slack.ReactionRemovedEvent)
-			if !ok || data.User == data.ItemUser {
-				continue
-			}
-			ctx := mctx.Annotate(a.ctx, "user", data.ItemUser)
-			mlog.Info("decrementing user's balance", ctx)
-			if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "-1")); err != nil {
-				mlog.Error("error decrementing user's balance", ctx, merr.Context(err))
-			}
-		case "message":
-			data, ok := e.Data.(*slack.MessageEvent)
-			if !ok {
-				continue
-			}
-			if err := a.processMsg(data.Channel, data.User, data.Text); err != nil {
-				ctx := mctx.Annotate(a.ctx, "text", data.Text)
-				mlog.Warn("error processing message", ctx, merr.Context(err))
+		select {
+		case e := <-a.slackClient.RTM.IncomingEvents:
+			a.processSlackEvent(e)
+		case tx := <-txCh:
+			a.processStellarTx(tx)
+			if err := a.redis.Do(radix.Cmd(nil, "SET", lastCursorKey, tx.PT)); err != nil {
+				mlog.Error("could not set lastCursorKey",
+					mctx.Annotate(a.ctx, "lastCursor", tx.PT),
+					merr.Context(err))
 			}
 		}
 	}
@@ -310,10 +357,6 @@ func main() {
 	ctx, a.redis = withRedis(ctx)
 	ctx, a.stellar = withStellar(ctx)
 	a.ctx = ctx
-	ctx = mrun.WithStartHook(ctx, func(context.Context) error {
-		go a.spin()
-		return nil
-	})
 
 	ctx = mrun.WithStartHook(ctx, func(innerCtx context.Context) error {
 		mlog.Info("getting bot user info", ctx, innerCtx)
@@ -323,6 +366,19 @@ func main() {
 		}
 		a.botUser = res.User
 		a.botUserID = res.UserID
+		return nil
+	})
+
+	ctx = mrun.WithStartHook(ctx, func(context.Context) error {
+		mlog.Info("fetching last cursor from redis", ctx)
+		var lastCursor string
+		mn := radix.MaybeNil{Rcv: &lastCursor}
+		if err := a.redis.Do(radix.Cmd(&mn, "GET", lastCursorKey)); err != nil {
+			return merr.Wrap(err, ctx)
+		}
+
+		mlog.Info("beginning app loop", mctx.Annotate(ctx, "lastCursor", lastCursor))
+		go a.spin(lastCursor)
 		return nil
 	})
 
