@@ -1,4 +1,4 @@
-module buckaroo-bonzai
+module buckaroo-banzai
 
 go 1.12
 
