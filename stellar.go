@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"text/template"
@@ -13,14 +14,15 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mhttp"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
-	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/protocols/horizon/operations"
 	"github.com/stellar/go/strkey"
 )
 
 const federationPath = "/api/federation"
 
+// TODO make CRYPTICBUCK configurable
 type stellar struct {
 	ctx    context.Context
 	kp     *keypair.Full
@@ -134,18 +136,26 @@ func (s *stellar) federationHandler(rw http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *stellar) receiveTxs(ctx context.Context, lastCursor string) <-chan horizon.Transaction {
-	ch := make(chan horizon.Transaction)
+func (s *stellar) receivePayments(ctx context.Context, lastCursor string) <-chan operations.Payment {
+	ch := make(chan operations.Payment)
 	go func() {
 		defer close(ch)
 		for {
-			req := horizonclient.TransactionRequest{
+			req := horizonclient.OperationRequest{
 				ForAccount: s.kp.Address(),
 				Cursor:     lastCursor,
 			}
-			err := s.client.StreamTransactions(ctx, req, func(tx horizon.Transaction) {
-				ch <- tx
-				lastCursor = tx.PT
+			err := s.client.StreamPayments(ctx, req, func(op operations.Operation) {
+				switch opT := op.(type) {
+				case operations.Payment:
+					ch <- opT
+				case operations.PathPayment:
+					ch <- opT.Payment
+				default:
+					mlog.Warn("unknown operation type", s.ctx, mctx.Annotate(ctx,
+						"op", fmt.Sprintf("%#v", op)))
+				}
+				lastCursor = op.PagingToken()
 			})
 			if err == context.Canceled {
 				return

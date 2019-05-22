@@ -14,8 +14,8 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/mediocregopher/radix/v3"
 	"github.com/nlopes/slack"
-	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/protocols/horizon/operations"
 )
 
 type slackClient struct {
@@ -277,12 +277,29 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 	}
 }
 
-func (a *app) processStellarTx(tx horizon.Transaction) {
+func (a *app) processStellarPayment(payment operations.Payment) {
 	ctx := mctx.Annotate(a.ctx,
-		"txID", tx.ID, "txCursor", tx.PT, "txHash", tx.Hash,
-		"txSrcAccount", tx.Account, "txFee", tx.FeePaid, "txMemo", tx.Memo)
+		"paymentOpID", payment.ID,
+		"paymentCursor", payment.PT,
+		"paymentFrom", payment.From,
+		"paymentCode", payment.Code,
+		"paymentIssuer", payment.Issuer,
+		"paymentAmount", payment.Amount,
+	)
 	mlog.Info("processing incoming stellar transaction", ctx)
 
+	if payment.Code != "CRYPTICBUCK" || payment.Issuer != a.stellar.kp.Address() {
+		mlog.Warn("payment is not in buckaroo's currency", ctx)
+		return
+	}
+
+	tx, err := a.stellar.client.TransactionDetail(payment.GetTransactionHash())
+	if err != nil {
+		mlog.Warn("failed to retrieve operation's tx", ctx, merr.Context(err))
+		return
+	}
+
+	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
 	suffix := "*" + a.stellar.domain
 	if !strings.HasSuffix(tx.Memo, suffix) {
 		// if they don't fill the memo correctly, don't distribute the money.
@@ -290,36 +307,38 @@ func (a *app) processStellarTx(tx horizon.Transaction) {
 		return
 	}
 
-	userID := strings.TrimSuffix(tx.Memo, suffix)
-	if user, err := a.getUser(userID); err != nil {
+	userName := strings.TrimSuffix(tx.Memo, suffix)
+	user, err := a.getUser(userName)
+	if err != nil {
 		mlog.Warn("error retrieving user info, couldn't distribute money", ctx, merr.Context(err))
 		return
 	} else if user == nil { // not sure if this happens, but whatevs
 		mlog.Warn("incoming stellar transaction destined for invalid user", ctx)
+		return
 	}
+	ctx = mctx.Annotate(ctx, "userID", user.ID)
 
-	// TODO determine if the transaction contained any CRYPTICBUCKs (or whatever
-	// the currency is). Look in the tx's operations link, see:
-	// https://horizon-testnet.stellar.org/transactions/d9b1a716f844104e0ff27ec285e5bc91a33ebb4f63adb481478007e1efac26d4
-	// https://horizon-testnet.stellar.org/transactions/d9b1a716f844104e0ff27ec285e5bc91a33ebb4f63adb481478007e1efac26d4/operations
-	// https://horizon-testnet.stellar.org/operations/190417375076353
-
-	// TODO increment account balance
+	err = a.redis.Do(radix.Cmd(nil, "HINCRYBY", balancesKey, user.ID, payment.Amount))
+	if err != nil {
+		mlog.Warn("failed to increment user's balance", ctx, merr.Context(err))
+		return
+	}
 }
 
 const lastCursorKey = "lastCursor"
 
 func (a *app) spin(lastCursor string) {
-	txCh := a.stellar.receiveTxs(a.ctx, lastCursor)
+	paymentCh := a.stellar.receivePayments(a.ctx, lastCursor)
 	for {
 		select {
 		case e := <-a.slackClient.RTM.IncomingEvents:
 			a.processSlackEvent(e)
-		case tx := <-txCh:
-			a.processStellarTx(tx)
-			if err := a.redis.Do(radix.Cmd(nil, "SET", lastCursorKey, tx.PT)); err != nil {
+		case payment := <-paymentCh:
+			a.processStellarPayment(payment)
+			pt := payment.PagingToken()
+			if err := a.redis.Do(radix.Cmd(nil, "SET", lastCursorKey, pt)); err != nil {
 				mlog.Error("could not set lastCursorKey",
-					mctx.Annotate(a.ctx, "lastCursor", tx.PT),
+					mctx.Annotate(a.ctx, "lastCursor", pt),
 					merr.Context(err))
 			}
 		}
