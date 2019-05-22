@@ -150,6 +150,7 @@ func (s *stellar) receiveTxs(ctx context.Context, lastCursor string) <-chan hori
 			if err == context.Canceled {
 				return
 			}
+			err = merr.Wrap(err)
 			mlog.Warn("error while streaming transactions", s.ctx, ctx, merr.Context(err))
 		}
 	}()

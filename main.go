@@ -127,6 +127,12 @@ func (a *app) processSlackMsg(channelID, userID, msg string) error {
 	}
 	ctx = mctx.Annotate(ctx, "userID", userID, "channel", channel.Name)
 
+	user, err := a.getUser(userID)
+	if err != nil {
+		return merr.Wrap(err, ctx)
+	}
+	ctx = mctx.Annotate(ctx, "user", user.Name)
+
 	msg = strings.TrimSpace(msg)
 	prefix := "<@" + a.botUserID + ">"
 	if !strings.HasPrefix(msg, prefix) && !channel.IsIM {
@@ -173,14 +179,7 @@ func (a *app) processSlackMsg(channelID, userID, msg string) error {
 		if len(fields) != 3 {
 			break
 		}
-		ctx = mctx.Annotate(ctx, "command", "give")
-		srcUser, err := a.getUser(userID)
-		if err != nil {
-			outErr = err
-			break
-		}
-
-		ctx = mctx.Annotate(ctx, "user", srcUser.Name, "dstUserID", fields[1])
+		ctx = mctx.Annotate(ctx, "command", "give", "dstUserID", fields[1])
 		dstUser, err := a.getUser(fields[1])
 		if err != nil {
 			outErr = err
@@ -202,7 +201,7 @@ func (a *app) processSlackMsg(channelID, userID, msg string) error {
 
 		mlog.Info("giving bucks", ctx)
 		if err = a.redis.Do(giveCmd.Cmd(
-			nil, balancesKey, dstUser.ID, srcUser.ID, strconv.Itoa(amount),
+			nil, balancesKey, dstUser.ID, user.ID, strconv.Itoa(amount),
 		)); err != nil {
 			outErr = err
 			break
