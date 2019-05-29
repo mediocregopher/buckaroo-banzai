@@ -1,0 +1,28 @@
+version: '3.2'
+services:
+  buckaroo-banzai:
+    build: .
+    command: /wait-for redis:6379 -- /buckaroo-banzai
+    image: ${DOCKER_IMAGE}
+    ports:
+      - "8000:8000"
+    environment:
+      - SLACK_TOKEN
+      - STELLAR_DOMAIN
+      - STELLAR_SEED
+      - STELLAR_HTTP_NET_LISTEN_ADDR=:8000
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis
+  redis:
+    image: redis
+    command: redis-server /etc/redis.conf
+    volumes:
+      - type: bind
+        source: ./redis_db
+        target: /data
+      - type: bind
+        source: ./redis.conf
+        target: /etc/redis.conf
+        read_only: true
+
