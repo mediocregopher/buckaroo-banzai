@@ -64,6 +64,9 @@ type app struct {
 	slackClient *slackClient
 	redis       radix.Client
 	stellar     *stellar
+
+	// if true then buckaroo won't speak or listen to anyone speaking to him.
+	ghost bool
 }
 
 const balancesKey = "balances"
@@ -266,11 +269,13 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 			mlog.Error("error decrementing user's balance", ctx, merr.Context(err))
 		}
 	case "message":
+		if a.ghost {
+			return
+		}
 		data, ok := e.Data.(*slack.MessageEvent)
 		if !ok {
 			return
-		}
-		if err := a.processSlackMsg(data.Channel, data.User, data.Text); err != nil {
+		} else if err := a.processSlackMsg(data.Channel, data.User, data.Text); err != nil {
 			ctx := mctx.Annotate(a.ctx, "text", data.Text)
 			mlog.Warn("error processing message", ctx, merr.Context(err))
 		}
@@ -375,6 +380,12 @@ func main() {
 	ctx, a.redis = withRedis(ctx)
 	ctx, a.stellar = withStellar(ctx)
 	a.ctx = ctx
+
+	ctx, ghost := mcfg.WithBool(ctx, "ghost", "if set then buckaroo will ignore all messages directed at him")
+	ctx = mrun.WithStartHook(ctx, func(innerCtx context.Context) error {
+		a.ghost = *ghost
+		return nil
+	})
 
 	ctx = mrun.WithStartHook(ctx, func(innerCtx context.Context) error {
 		mlog.Info("getting bot user info", ctx, innerCtx)
