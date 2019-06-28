@@ -1,7 +1,12 @@
 version: '3.2'
+networks:
+  default:
+    external:
+      name: mediocre-network
+
 services:
   buckaroo-banzai:
-    build: .
+    restart: always
     command: /wait-for redis:6379 -- /buckaroo-banzai
     image: ${DOCKER_IMAGE}
     ports:
@@ -14,7 +19,9 @@ services:
       - REDIS_ADDR=redis:6379
     depends_on:
       - redis
+
   redis:
+    restart: always
     image: redis
     command: redis-server /etc/redis.conf
     volumes:
