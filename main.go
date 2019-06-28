@@ -113,7 +113,7 @@ const errNotEnoughBucks = "you aint got that kind of scratch"
 var giveCmd = radix.NewEvalScript(1, `
 	local amount = tonumber(ARGV[3])
 	local srcAmount = tonumber(redis.call("HGET", KEYS[1], ARGV[2]))
-	if (srcAmount < amount) then
+	if not srcAmount or (srcAmount < amount) then
 		return redis.error_reply("`+errNotEnoughBucks+`")
 	end
 
