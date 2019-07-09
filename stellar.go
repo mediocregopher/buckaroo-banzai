@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
+	"github.com/mediocregopher/mediocre-go-lib/mcmp"
 	"github.com/mediocregopher/mediocre-go-lib/mctx"
 	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mhttp"
@@ -24,7 +25,7 @@ const federationPath = "/api/federation"
 
 // TODO make CRYPTICBUCK configurable
 type stellar struct {
-	ctx    context.Context
+	cmp    *mcmp.Component
 	kp     *keypair.Full
 	domain string
 	client *horizonclient.Client
@@ -32,43 +33,48 @@ type stellar struct {
 	*http.ServeMux
 }
 
-func withStellar(parent context.Context) (context.Context, *stellar) {
+func instStellar(parent *mcmp.Component) *stellar {
 	s := &stellar{
-		ctx:      mctx.NewChild(parent, "stellar"),
+		cmp:      parent.Child("stellar"),
 		ServeMux: http.NewServeMux(),
 	}
 
-	s.ServeMux.Handle("/.well-known/stellar.toml", http.HandlerFunc(s.tomlHandler))
-	s.ServeMux.Handle(federationPath, http.HandlerFunc(s.federationHandler))
+	s.ServeMux.HandleFunc("/.well-known/stellar.toml", s.tomlHandler)
+	s.ServeMux.HandleFunc(federationPath, s.federationHandler)
 
 	var (
 		seedStr *string
 		domain  *string
 		live    *bool
 	)
-	s.ctx, seedStr = mcfg.WithRequiredString(s.ctx, "seed", "Seed for account which will issue CRYPTICBUCKs")
-	s.ctx, domain = mcfg.WithRequiredString(s.ctx, "domain", "Domain the server will be served from")
-	s.ctx, live = mcfg.WithBool(s.ctx, "live", "Use the live network.")
+	seedStr = mcfg.String(s.cmp, "seed",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Seed for account which will issue CRYPTICBUCKs"))
+	domain = mcfg.String(s.cmp, "domain",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Domain the server will be served from"))
+	live = mcfg.Bool(s.cmp, "live",
+		mcfg.ParamUsage("Use the live network."))
 
-	s.ctx = mrun.WithStartHook(s.ctx, func(context.Context) error {
+	mrun.InitHook(s.cmp, func(ctx context.Context) error {
 		seedB, err := strkey.Decode(strkey.VersionByteSeed, *seedStr)
 		if err != nil {
-			return merr.Wrap(err, s.ctx)
+			return merr.Wrap(err, s.cmp.Context(), ctx)
 		} else if len(seedB) != 32 {
-			return merr.New("invalid seed string", s.ctx)
+			return merr.New("invalid seed string", s.cmp.Context(), ctx)
 		}
 		var seedB32 [32]byte
 		copy(seedB32[:], seedB)
 		pair, err := keypair.FromRawSeed(seedB32)
 		if err != nil {
-			return merr.Wrap(err, s.ctx)
+			return merr.Wrap(err, s.cmp.Context(), ctx)
 		}
 		s.kp = pair
-		s.ctx = mctx.Annotate(s.ctx, "address", s.kp.Address())
-		mlog.Info("loaded stellar seed", s.ctx)
+		s.cmp.Annotate("address", s.kp.Address())
+		mlog.From(s.cmp).Info("loaded stellar seed", ctx)
 
 		s.domain = *domain
-		s.ctx = mctx.Annotate(s.ctx, "domain", s.domain)
+		s.cmp.Annotate("domain", s.domain)
 
 		if *live {
 			s.client = horizonclient.DefaultPublicNetClient
@@ -78,9 +84,8 @@ func withStellar(parent context.Context) (context.Context, *stellar) {
 		return nil
 	})
 
-	s.ctx, _ = mhttp.WithListeningServer(s.ctx, s)
-
-	return mctx.WithChild(parent, s.ctx), s
+	mhttp.InstListeningServer(s.cmp, s)
+	return s
 }
 
 var stellarTOMLTPL = template.Must(template.New("").Parse(`
@@ -106,7 +111,8 @@ func (s *stellar) tomlHandler(rw http.ResponseWriter, r *http.Request) {
 		FederationAddr: s.domain + federationPath,
 	})
 	if err != nil {
-		mlog.Error("error executing toml template", s.ctx, merr.Context(err))
+		mlog.From(s.cmp).Error("error executing toml template",
+			r.Context(), merr.Context(err))
 	}
 }
 
@@ -152,8 +158,8 @@ func (s *stellar) receivePayments(ctx context.Context, lastCursor string) <-chan
 				case operations.PathPayment:
 					ch <- opT.Payment
 				default:
-					mlog.Warn("unknown operation type", s.ctx, mctx.Annotate(ctx,
-						"op", fmt.Sprintf("%#v", op)))
+					mlog.From(s.cmp).Warn("unknown operation type",
+						mctx.Annotate(ctx, "op", fmt.Sprintf("%#v", op)))
 				}
 				lastCursor = op.PagingToken()
 			})
@@ -161,7 +167,8 @@ func (s *stellar) receivePayments(ctx context.Context, lastCursor string) <-chan
 				return
 			}
 			err = merr.Wrap(err)
-			mlog.Warn("error while streaming transactions", s.ctx, ctx, merr.Context(err))
+			mlog.From(s.cmp).Warn("error while streaming transactions",
+				ctx, merr.Context(err))
 		}
 	}()
 	return ch
