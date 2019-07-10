@@ -79,7 +79,7 @@ type app struct {
 
 	slackClient *slackClient
 	redis       radix.Client
-	stellar     *stellar
+	stellar     *stellarServer
 
 	// if true then buckaroo won't speak or listen to anyone speaking to him.
 	ghost bool
@@ -378,29 +378,9 @@ func main() {
 		channels:    map[string]*slack.Channel{},
 		users:       map[string]*slack.User{},
 		redis:       instRedis(cmp),
-		stellar:     instStellar(cmp),
+		stellar:     instStellarServer(cmp),
 		slackClient: instSlackClient(cmp),
 	}
-
-	// for convenience, add a keygen option which will generate a new key, print
-	// it, then exit
-	//var keygen *bool
-	//ctx, keygen = mcfg.WithBool(ctx, "key-gen", "If set, generate a new stellar seed/address, print them, then exit")
-	//ctx = mrun.WithStartHook(ctx, func(innerCtx context.Context) error {
-	//	if !*keygen {
-	//		return nil
-	//	}
-	//	pair, err := keypair.Random()
-	//	if err != nil {
-	//		return merr.Wrap(err, ctx, innerCtx)
-	//	}
-
-	//	mlog.Info("keypair generated", mctx.Annotate(ctx,
-	//		"address", pair.Address(),
-	//		"seed", pair.Seed(),
-	//	))
-	//	return merr.New("exiting due to key-gen param", ctx, innerCtx)
-	//})
 
 	ghost := mcfg.Bool(cmp, "ghost",
 		mcfg.ParamUsage("if set then buckaroo will ignore all messages directed at him"))

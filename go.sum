@@ -91,8 +91,8 @@ github.com/mattn/go-isatty v0.0.5/go.mod h1:Iq45c/XA43vh69/j3iqttzPXn0bhXyGjM0Hd
 github.com/mattn/go-sqlite3 v1.9.0/go.mod h1:FPy6KqzDD04eiIsT53CuJW3U88zkxoIYsOqkbpncsNc=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/mediocregopher/mediocre-go-lib v0.0.0-20181029021733-cb65787f37ed/go.mod h1:dSsfyI2zABAdhcbvkXqgxOxrCsbYeHCPgrZkku60dSg=
-github.com/mediocregopher/mediocre-go-lib v0.0.0-20190709235458-b2aa2f73bd27 h1:crmjNnEaBlU+SAbktl3dujaTwdXox9NWu/mN7M76EjM=
-github.com/mediocregopher/mediocre-go-lib v0.0.0-20190709235458-b2aa2f73bd27/go.mod h1:osrr4TUdskPyCrRbMwHCq1YuK1ai6pvTOc4N2bBFuwk=
+github.com/mediocregopher/mediocre-go-lib v0.0.0-20190710005431-d54954cd8ec9 h1:d53Sg7jQElritAv2KQFxFGrOM0fntzgH+3fvBoVIRow=
+github.com/mediocregopher/mediocre-go-lib v0.0.0-20190710005431-d54954cd8ec9/go.mod h1:osrr4TUdskPyCrRbMwHCq1YuK1ai6pvTOc4N2bBFuwk=
 github.com/mediocregopher/radix/v3 v3.2.3 h1:TbcGCZdo9zfPYPgevsqRn+OjvCyfOK6TzuXhqzWdCt0=
 github.com/mediocregopher/radix/v3 v3.2.3/go.mod h1:EmfVyvspXz1uZEyPBMyGK+kjWiKQGvsUt6O3Pj+LDCQ=
 github.com/microcosm-cc/bluemonday v1.0.1/go.mod h1:hsXNsILzKxV+sX77C5b8FSuKF00vh2OMYv+xgHpAMF4=

@@ -18,69 +18,41 @@ import (
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/protocols/horizon/operations"
-	"github.com/stellar/go/strkey"
+
+	"buckaroo-banzai/stellar"
 )
 
 const federationPath = "/api/federation"
 
 // TODO make CRYPTICBUCK configurable
-type stellar struct {
+type stellarServer struct {
 	cmp    *mcmp.Component
 	kp     *keypair.Full
 	domain string
-	client *horizonclient.Client
+	client *stellar.Client
 
 	*http.ServeMux
 }
 
-func instStellar(parent *mcmp.Component) *stellar {
-	s := &stellar{
-		cmp:      parent.Child("stellar"),
+func instStellarServer(parent *mcmp.Component) *stellarServer {
+	cmp := parent.Child("stellar")
+	s := &stellarServer{
+		cmp:      cmp,
 		ServeMux: http.NewServeMux(),
+		client:   stellar.InstClient(cmp, false),
+		kp:       stellar.InstKeyPair(cmp),
 	}
 
 	s.ServeMux.HandleFunc("/.well-known/stellar.toml", s.tomlHandler)
 	s.ServeMux.HandleFunc(federationPath, s.federationHandler)
 
-	var (
-		seedStr *string
-		domain  *string
-		live    *bool
-	)
-	seedStr = mcfg.String(s.cmp, "seed",
-		mcfg.ParamRequired(),
-		mcfg.ParamUsage("Seed for account which will issue CRYPTICBUCKs"))
-	domain = mcfg.String(s.cmp, "domain",
+	domain := mcfg.String(s.cmp, "domain",
 		mcfg.ParamRequired(),
 		mcfg.ParamUsage("Domain the server will be served from"))
-	live = mcfg.Bool(s.cmp, "live",
-		mcfg.ParamUsage("Use the live network."))
 
 	mrun.InitHook(s.cmp, func(ctx context.Context) error {
-		seedB, err := strkey.Decode(strkey.VersionByteSeed, *seedStr)
-		if err != nil {
-			return merr.Wrap(err, s.cmp.Context(), ctx)
-		} else if len(seedB) != 32 {
-			return merr.New("invalid seed string", s.cmp.Context(), ctx)
-		}
-		var seedB32 [32]byte
-		copy(seedB32[:], seedB)
-		pair, err := keypair.FromRawSeed(seedB32)
-		if err != nil {
-			return merr.Wrap(err, s.cmp.Context(), ctx)
-		}
-		s.kp = pair
-		s.cmp.Annotate("address", s.kp.Address())
-		mlog.From(s.cmp).Info("loaded stellar seed", ctx)
-
 		s.domain = *domain
 		s.cmp.Annotate("domain", s.domain)
-
-		if *live {
-			s.client = horizonclient.DefaultPublicNetClient
-		} else {
-			s.client = horizonclient.DefaultTestNetClient
-		}
 		return nil
 	})
 
@@ -102,7 +74,7 @@ DESC="CRYPTICBUCKs are given to members of the Cryptic group by our resident Tok
 CONDITIONS="CRYPTICBUCKs are priceless and anybody trading them is a fool."
 `))
 
-func (s *stellar) tomlHandler(rw http.ResponseWriter, r *http.Request) {
+func (s *stellarServer) tomlHandler(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Access-Control-Allow-Origin", "*")
 	rw.Header().Set("Content-Type", "text/toml")
 
@@ -118,7 +90,7 @@ func (s *stellar) tomlHandler(rw http.ResponseWriter, r *http.Request) {
 
 const notFoundStr = `{"detail":"not found"}`
 
-func (s *stellar) federationHandler(rw http.ResponseWriter, r *http.Request) {
+func (s *stellarServer) federationHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.FormValue("type") != "name" {
 		http.Error(rw, notFoundStr, 404)
 		return
@@ -142,7 +114,7 @@ func (s *stellar) federationHandler(rw http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *stellar) receivePayments(ctx context.Context, lastCursor string) <-chan operations.Payment {
+func (s *stellarServer) receivePayments(ctx context.Context, lastCursor string) <-chan operations.Payment {
 	ch := make(chan operations.Payment)
 	go func() {
 		defer close(ch)
