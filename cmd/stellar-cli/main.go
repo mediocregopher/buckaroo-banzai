@@ -4,7 +4,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/mediocregopher/mediocre-go-lib/m"
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
@@ -13,29 +17,170 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
+	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/txnbuild"
+
+	"buckaroo-banzai/stellar"
 )
+
+func jsonDump(v interface{}) {
+	b, err := json.MarshalIndent(v, "", "    ")
+	if err != nil {
+		panic(fmt.Sprintf("couldn't json marshal %#v: %v", v, err))
+	}
+	fmt.Println(string(b))
+}
+
+func cmdGen(cmp *mcmp.Component) {
+	mrun.InitHook(cmp, func(ctx context.Context) error {
+		pair, err := keypair.Random()
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		mlog.From(cmp).Info("keypair generated", mctx.Annotate(ctx,
+			"address", pair.Address(),
+			"seed", pair.Seed(),
+		))
+		return nil
+	})
+}
+
+func cmdTrust(cmp *mcmp.Component) {
+	client := stellar.InstClient(cmp, false)
+	pair := stellar.InstKeyPair(cmp)
+	assetCode := mcfg.String(cmp, "asset-code",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Asset code to issue trust for"))
+	assetIssuer := mcfg.String(cmp, "asset-issuer",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Issuing address of the asset to trust"))
+	limit := mcfg.Int(cmp, "limit",
+		mcfg.ParamDefault(999999),
+		mcfg.ParamUsage("Limit of the asset to trust"))
+	mrun.InitHook(cmp, func(ctx context.Context) error {
+		sourceAccount, err := client.AccountDetail(horizonclient.AccountRequest{
+			AccountID: pair.Address(),
+		})
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		ctx = mctx.Annotate(ctx, "assetCode", *assetCode)
+
+		op := txnbuild.ChangeTrust{
+			Line: txnbuild.CreditAsset{
+				Code:   *assetCode,
+				Issuer: *assetIssuer,
+			},
+			Limit: strconv.Itoa(*limit),
+		}
+
+		tx := txnbuild.Transaction{
+			SourceAccount: &sourceAccount,
+			Operations:    []txnbuild.Operation{&op},
+			Timebounds:    txnbuild.NewInfiniteTimeout(),
+			Network:       client.NetworkPassphrase,
+		}
+
+		txXDR, err := tx.BuildSignEncode(pair)
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		txRes, err := client.SubmitTransactionXDR(txXDR)
+		jsonDump(txRes)
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(),
+				mctx.Annotate(ctx, "txXDR", txXDR))
+		}
+		return nil
+	})
+}
+
+func cmdSend(cmp *mcmp.Component) {
+	client := stellar.InstClient(cmp, false)
+	pair := stellar.InstKeyPair(cmp)
+	assetCode := mcfg.String(cmp, "asset-code",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Asset code to send"))
+	assetIssuer := mcfg.String(cmp, "asset-issuer",
+		mcfg.ParamUsage("Issuing address of the asset to send, if it's a token"))
+	amount := mcfg.String(cmp, "amount",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Amount of the asset to send"))
+	dstAddress := mcfg.String(cmp, "dst",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Address to send to."))
+	memo := mcfg.String(cmp, "memo",
+		mcfg.ParamUsage("Memo to attach to transaction"))
+	mrun.InitHook(cmp, func(ctx context.Context) error {
+		sourceAccount, err := client.AccountDetail(horizonclient.AccountRequest{
+			AccountID: pair.Address(),
+		})
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		ctx = mctx.Annotate(ctx,
+			"assetCode", *assetCode,
+			"amount", *amount,
+			"dst", *dstAddress,
+		)
+
+		var asset txnbuild.Asset
+		if strings.ToUpper(*assetCode) == "XLM" {
+			asset = txnbuild.NativeAsset{}
+		} else if *assetIssuer == "" {
+			return merr.New("asset-issuer required for non-native asset", cmp.Context(), ctx)
+		} else {
+			asset = txnbuild.CreditAsset{
+				Code:   *assetCode,
+				Issuer: *assetIssuer,
+			}
+		}
+
+		op := txnbuild.Payment{
+			Destination: *dstAddress,
+			Amount:      *amount,
+			Asset:       asset,
+		}
+
+		tx := txnbuild.Transaction{
+			SourceAccount: &sourceAccount,
+			Operations:    []txnbuild.Operation{&op},
+			Timebounds:    txnbuild.NewInfiniteTimeout(),
+			Network:       client.NetworkPassphrase,
+		}
+		if *memo != "" {
+			tx.Memo = txnbuild.MemoText(*memo)
+		}
+
+		txXDR, err := tx.BuildSignEncode(pair)
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		txRes, err := client.SubmitTransactionXDR(txXDR)
+		jsonDump(txRes)
+		if err != nil {
+			ctx = mctx.Annotate(ctx, "txXDR", txXDR)
+			if herr, ok := err.(*horizonclient.Error); ok {
+				b, _ := json.Marshal(herr.Problem)
+				ctx = mctx.Annotate(ctx, "problem", string(b))
+			}
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+		return nil
+	})
+}
 
 func main() {
 	cmp := m.RootComponent()
-	mcfg.CLISubCommand(cmp, "gen", "Generate a new stellar seed and address",
-		func(cmp *mcmp.Component) {
-			mrun.InitHook(cmp, func(ctx context.Context) error {
-				pair, err := keypair.Random()
-				if err != nil {
-					return merr.Wrap(err, cmp.Context(), ctx)
-				}
-
-				mlog.From(cmp).Info("keypair generated", mctx.Annotate(ctx,
-					"address", pair.Address(),
-					"seed", pair.Seed(),
-				))
-				return nil
-			})
-		})
-
-	//stellar.InstClient(cmp, false)
-	//stellar.InstKeyPair(cmp)
+	mcfg.CLISubCommand(cmp, "gen", "Generate a new stellar seed and address", cmdGen)
+	mcfg.CLISubCommand(cmp, "trust", "Add a trust line", cmdTrust)
+	mcfg.CLISubCommand(cmp, "send", "Send an asset to another account", cmdSend)
 
 	m.MustInit(cmp)
 	os.Stdout.Sync()

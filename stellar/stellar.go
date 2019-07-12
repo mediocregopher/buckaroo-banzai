@@ -11,6 +11,7 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
 	"github.com/stellar/go/strkey"
 )
 
@@ -18,6 +19,7 @@ import (
 type Client struct {
 	cmp *mcmp.Component
 	*horizonclient.Client
+	NetworkPassphrase string
 }
 
 // InstClient instantiates a Client which will be intialized and configured by
@@ -39,9 +41,11 @@ func InstClient(parent *mcmp.Component, child bool) *Client {
 		if *live {
 			mlog.From(client.cmp).Warn("connecting to live net", ctx)
 			client.Client = horizonclient.DefaultPublicNetClient
+			client.NetworkPassphrase = network.PublicNetworkPassphrase
 		} else {
 			mlog.From(client.cmp).Info("connecting to test net", ctx)
 			client.Client = horizonclient.DefaultTestNetClient
+			client.NetworkPassphrase = network.TestNetworkPassphrase
 		}
 		return nil
 	})
