@@ -126,8 +126,14 @@ func (s *stellarServer) receivePayments(ctx context.Context, lastCursor string) 
 			err := s.client.StreamPayments(ctx, req, func(op operations.Operation) {
 				switch opT := op.(type) {
 				case operations.Payment:
+					if opT.To != s.kp.Address() || opT.From == s.kp.Address() {
+						break
+					}
 					ch <- opT
 				case operations.PathPayment:
+					if opT.To != s.kp.Address() || opT.From == s.kp.Address() {
+						break
+					}
 					ch <- opT.Payment
 				default:
 					mlog.From(s.cmp).Warn("unknown operation type",

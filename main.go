@@ -74,8 +74,9 @@ type app struct {
 	cmp                *mcmp.Component
 	botUserID, botUser string
 
-	channels map[string]*slack.Channel
-	users    map[string]*slack.User
+	channels    map[string]*slack.Channel
+	users       map[string]*slack.User
+	usersByName map[string]*slack.User
 
 	slackClient *slackClient
 	redis       radix.Client
@@ -121,6 +122,33 @@ func (a *app) getUser(id string) (*slack.User, error) {
 		a.users[id] = user
 	}
 	return user, err
+}
+
+func (a *app) refreshUsersByName() error {
+	users, err := a.slackClient.Client.GetUsers()
+	if err != nil {
+		return merr.Wrap(err, a.cmp.Context())
+	}
+	a.usersByName = make(map[string]*slack.User, len(users))
+	for i, user := range users {
+		a.usersByName[user.Name] = &users[i]
+	}
+	return nil
+}
+
+func (a *app) getUserByName(name string) (*slack.User, error) {
+	user, ok := a.usersByName[name]
+	if ok {
+		return user, nil
+	} else if err := a.refreshUsersByName(); err != nil {
+		return nil, merr.Wrap(err, a.cmp.Context())
+	}
+	user, ok = a.usersByName[name]
+	if !ok {
+		return nil, merr.New("user not found",
+			mctx.Annotate(a.cmp.Context(), "user", user))
+	}
+	return user, nil
 }
 
 const errNotEnoughBucks = "you aint got that kind of scratch"
@@ -299,7 +327,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 }
 
 func (a *app) processStellarPayment(payment operations.Payment) {
-	ctx := mctx.Annotated(
+	ctx := mctx.Annotate(a.cmp.Context(),
 		"paymentOpID", payment.ID,
 		"paymentCursor", payment.PT,
 		"paymentFrom", payment.From,
@@ -329,20 +357,30 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 	}
 
 	userName := strings.TrimSuffix(tx.Memo, suffix)
-	user, err := a.getUser(userName)
+	user, err := a.getUserByName(userName)
 	if err != nil {
-		mlog.From(a.cmp).Warn("error retrieving user info, couldn't distribute money", ctx, merr.Context(err))
+		mlog.From(a.cmp).Warn("error retrieving user info", ctx, merr.Context(err))
 		return
 	} else if user == nil { // not sure if this happens, but whatevs
 		mlog.From(a.cmp).Warn("incoming stellar transaction destined for invalid user", ctx)
 		return
 	}
 
+	amount, err := strconv.ParseFloat(payment.Amount, 64)
+	if err != nil {
+		mlog.From(a.cmp).Warn("error parsing tx amount", ctx, merr.Context(err))
+		return
+	} else if float64(int64(amount)) != amount {
+		mlog.From(a.cmp).Warn("amount is not a whole number", ctx)
+		return
+	}
+
 	// TODO is it possible to reject a stellar tx? If so we should do that for
 	// any of the above cases
 
-	ctx = mctx.Annotate(ctx, "userID", user.ID)
-	err = a.redis.Do(radix.Cmd(nil, "HINCRYBY", balancesKey, user.ID, payment.Amount))
+	ctx = mctx.Annotate(ctx, "dstUserID", user.ID, "dstUserName", user.Name)
+	mlog.From(a.cmp).Info("incrementing user's account", ctx)
+	err = a.redis.Do(radix.FlatCmd(nil, "HINCRBY", balancesKey, user.ID, int64(amount)))
 	if err != nil {
 		mlog.From(a.cmp).Warn("failed to increment user's balance", ctx, merr.Context(err))
 		return
@@ -352,6 +390,10 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 const lastCursorKey = "lastCursor"
 
 func (a *app) spin(ctx context.Context, lastCursor string) {
+	if err := a.refreshUsersByName(); err != nil {
+		mlog.From(a.cmp).Fatal("failed to retrieve full user list", a.cmp.Context(), ctx, merr.Context(err))
+	}
+
 	paymentCh := a.stellar.receivePayments(ctx, lastCursor)
 	for {
 		select {
@@ -377,6 +419,7 @@ func main() {
 		cmp:         cmp,
 		channels:    map[string]*slack.Channel{},
 		users:       map[string]*slack.User{},
+		usersByName: map[string]*slack.User{},
 		redis:       instRedis(cmp),
 		stellar:     instStellarServer(cmp),
 		slackClient: instSlackClient(cmp),
