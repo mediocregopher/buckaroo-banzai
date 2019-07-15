@@ -5,4 +5,5 @@ build:
 	docker build -t $(IMAGE):$(GITREF) -t $(IMAGE):latest .
 
 push:
-	docker push $(IMAGE):$(GITREF) $(IMAGE):latest
+	docker push $(IMAGE):$(GITREF)
+	docker push $(IMAGE):latest
