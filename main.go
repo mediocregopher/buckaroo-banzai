@@ -18,6 +18,8 @@ import (
 	"github.com/stellar/go/protocols/horizon/operations"
 )
 
+var gitRef string
+
 type slackClient struct {
 	Client *slack.Client
 	RTM    *slack.RTM
@@ -204,6 +206,8 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 
 	var outErr error
 	switch strings.ToLower(fields[0]) {
+	case "ref":
+		sendMsg(channelID, "Current git ref is `%s`", gitRef)
 	case "balance":
 		ctx = mctx.Annotate(ctx, "command", "balance")
 		mlog.From(a.cmp).Info("getting user balance", ctx)
