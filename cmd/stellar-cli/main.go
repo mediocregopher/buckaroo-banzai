@@ -47,6 +47,40 @@ func cmdGen(cmp *mcmp.Component) {
 	})
 }
 
+func cmdDump(cmp *mcmp.Component) {
+	client := stellar.InstClient(cmp, false)
+	seed := mcfg.String(cmp, "seed",
+		mcfg.ParamUsage("Seed to dump all information about (mutually exclusive with -addr)"))
+	addr := mcfg.String(cmp, "addr",
+		mcfg.ParamUsage("Addr to dump all information about (mutually exclusive with -seed)"))
+	mrun.InitHook(cmp, func(ctx context.Context) error {
+		if (*seed == "" && *addr == "") || (*seed != "" && *addr != "") {
+			return merr.New("Exactly one of -seed and -addr should be given", cmp.Context(), ctx)
+		}
+
+		var accountReq horizonclient.AccountRequest
+		if *seed != "" {
+			pair, err := stellar.LoadKeyPair(*seed)
+			if err != nil {
+				return merr.Wrap(err, cmp.Context(), ctx)
+			}
+			accountReq.AccountID = pair.Address()
+		} else {
+			accountReq.AccountID = *addr
+		}
+		ctx = mctx.Annotate(ctx, "addr", accountReq.AccountID)
+
+		mlog.From(cmp).Info("loading account details", ctx)
+		detail, err := client.AccountDetail(accountReq)
+		if err != nil {
+			return merr.Wrap(err, cmp.Context(), ctx)
+		}
+
+		jsonDump(detail)
+		return nil
+	})
+}
+
 func cmdTrust(cmp *mcmp.Component) {
 	client := stellar.InstClient(cmp, false)
 	pair := stellar.InstKeyPair(cmp)
@@ -179,6 +213,7 @@ func cmdSend(cmp *mcmp.Component) {
 func main() {
 	cmp := m.RootComponent()
 	mcfg.CLISubCommand(cmp, "gen", "Generate a new stellar seed and address", cmdGen)
+	mcfg.CLISubCommand(cmp, "dump", "Dump all information about an account", cmdDump)
 	mcfg.CLISubCommand(cmp, "trust", "Add a trust line", cmdTrust)
 	mcfg.CLISubCommand(cmp, "send", "Send an asset to another account", cmdSend)
 

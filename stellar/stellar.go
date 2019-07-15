@@ -52,6 +52,20 @@ func InstClient(parent *mcmp.Component, child bool) *Client {
 	return client
 }
 
+// LoadKeyPair takes a seed string and returns the full keypair object for it.
+func LoadKeyPair(seed string) (*keypair.Full, error) {
+	seedB, err := strkey.Decode(strkey.VersionByteSeed, seed)
+	if err != nil {
+		return nil, merr.Wrap(err)
+	} else if len(seedB) != 32 {
+		return nil, merr.New("invalid seed string")
+	}
+	var seedB32 [32]byte
+	copy(seedB32[:], seedB)
+	pair, err := keypair.FromRawSeed(seedB32)
+	return pair, merr.Wrap(err)
+}
+
 // InstKeyPair instantiates a keypair onto the given Component. The keypair will
 // be initialized and configured by mrun's Init hook.
 func InstKeyPair(cmp *mcmp.Component) *keypair.Full {
@@ -61,15 +75,7 @@ func InstKeyPair(cmp *mcmp.Component) *keypair.Full {
 		mcfg.ParamRequired(),
 		mcfg.ParamUsage("Seed for account which will issue CRYPTICBUCKs"))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
-		seedB, err := strkey.Decode(strkey.VersionByteSeed, *seedStr)
-		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
-		} else if len(seedB) != 32 {
-			return merr.New("invalid seed string", cmp.Context(), ctx)
-		}
-		var seedB32 [32]byte
-		copy(seedB32[:], seedB)
-		pair, err := keypair.FromRawSeed(seedB32)
+		pair, err := LoadKeyPair(*seedStr)
 		if err != nil {
 			return merr.Wrap(err, cmp.Context(), ctx)
 		}
