@@ -62,7 +62,7 @@ func instStellarServer(parent *mcmp.Component) *stellarServer {
 
 var stellarTOMLTPL = template.Must(template.New("").Parse(`
 ACCOUNTS=["{{.Address}}"]
-FEDERATION_SERVER="{{.FederationAddr}}"
+FEDERATION_SERVER="https://{{.FederationAddr}}"
 
 [[CURRENCIES]]
 CODE="CRYPTICBUCK"
