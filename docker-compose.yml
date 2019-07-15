@@ -9,8 +9,6 @@ services:
     restart: always
     command: /wait-for redis:6379 -- /buckaroo-banzai
     image: ${DOCKER_IMAGE}
-    ports:
-      - "8000:8000"
     environment:
       - SLACK_TOKEN
       - STELLAR_DOMAIN
