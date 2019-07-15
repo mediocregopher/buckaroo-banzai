@@ -353,14 +353,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 	}
 
 	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
-	suffix := "*" + a.stellar.domain
-	if !strings.HasSuffix(tx.Memo, suffix) {
-		// if they don't fill the memo correctly, don't distribute the money.
-		mlog.From(a.cmp).Warn("incoming stellar transaction has invalid memo", ctx)
-		return
-	}
-
-	userName := strings.TrimSuffix(tx.Memo, suffix)
+	userName := tx.Memo
 	user, err := a.getUserByName(userName)
 	if err != nil {
 		mlog.From(a.cmp).Warn("error retrieving user info", ctx, merr.Context(err))

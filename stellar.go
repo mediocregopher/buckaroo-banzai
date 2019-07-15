@@ -101,6 +101,7 @@ func (s *stellarServer) federationHandler(rw http.ResponseWriter, r *http.Reques
 		http.Error(rw, notFoundStr, 404)
 		return
 	}
+	userName := strings.TrimSuffix(q, "*"+s.domain)
 
 	// We don't want to actually check if the username is a member of the slack
 	// channel and return based on that, because someone would be able to use
@@ -111,6 +112,8 @@ func (s *stellarServer) federationHandler(rw http.ResponseWriter, r *http.Reques
 	json.NewEncoder(rw).Encode(map[string]string{
 		"stellar_address": q,
 		"account_id":      s.kp.Address(),
+		"memo_type":       "text",
+		"memo":            userName,
 	})
 }
 
