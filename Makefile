@@ -10,3 +10,7 @@ docker-binary:
 push:
 	docker push $(IMAGE):$(GITREF)
 	docker push $(IMAGE):latest
+
+restart:
+	docker-compose down
+	docker-compose up -d
