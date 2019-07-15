@@ -353,7 +353,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 	}
 
 	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
-	userName := tx.Memo
+	userName := strings.TrimSuffix(tx.Memo, "*"+a.stellar.domain)
 	user, err := a.getUserByName(userName)
 	if err != nil {
 		mlog.From(a.cmp).Warn("error retrieving user info", ctx, merr.Context(err))
