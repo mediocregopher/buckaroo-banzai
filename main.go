@@ -92,11 +92,11 @@ const balancesKey = "balances"
 
 func (a *app) helpMsg() string {
 	return strings.TrimSpace(fmt.Sprintf("Hi, I'm Buckaroo Bonzai, the sole purveyor of CRYPTICBUCKs! You gain one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by talking to me you can give them to other people in the slack team, or even export them as Stellar tokens! @ me or DM me with any of the following commands:\n\n```"+`
-@%s balance                         // I will respond with your balance
-@%s give <user> <amount>            // Give CRYPTICBUCKs to <user> (how nice!)
-@%s send <stellar address> <amount> // Send CRYPTICBUCKs to <stellar address>
-`+"```\nNOTE that you must have a trustline established to ??? for the token CRYPTICBUCKs to use the export command",
-		a.botUser, a.botUser, a.botUser,
+@%s balance                                  // I will respond with your balance
+@%s give <amount> <user>                     // Give CRYPTICBUCKs to <user> (how nice!)
+@%s send <amount> <stellar address> [<memo>] // Send CRYPTICBUCKs to <stellar address>
+`+"```\nNOTE that you must have a trustline established to %s for the token CRYPTICBUCKs to use the export command",
+		a.botUser, a.botUser, a.botUser, a.stellar.kp.Address(),
 	))
 }
 
@@ -168,6 +168,17 @@ var giveCmd = radix.NewEvalScript(1, `
 	return "OK"
 `)
 
+// Keys:[balancesKey] Args:[user, amount]
+var decrCmd = radix.NewEvalScript(1, `
+	local amount = tonumber(ARGV[2])
+	local userAmount = tonumber(redis.call("HGET", KEYS[1], ARGV[1]))
+	if not userAmount or (userAmount < amount) then
+		return redis.error_reply("`+errNotEnoughBucks+`")
+	end
+	redis.call("HINCRBY", KEYS[1], ARGV[1], -1*amount)
+	return "OK"
+`)
+
 func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string) error {
 	ctx = mctx.Annotate(ctx, "channelID", channelID)
 	channel, err := a.getChannel(channelID)
@@ -228,10 +239,18 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 
 	case "give":
 		if len(fields) != 3 {
+			sendMsg(channelID, a.helpMsg())
 			break
 		}
-		ctx = mctx.Annotate(ctx, "command", "give", "dstUserID", fields[1])
-		dstUser, err := a.getUser(fields[1])
+		ctx = mctx.Annotate(ctx, "amount", fields[1])
+		amount, err := strconv.Atoi(fields[1])
+		if err != nil {
+			outErr = err
+			break
+		}
+
+		ctx = mctx.Annotate(ctx, "command", "give", "dstUserID", fields[2])
+		dstUser, err := a.getUser(fields[2])
 		if err != nil {
 			outErr = err
 			break
@@ -240,13 +259,6 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 
 		if dstUser.ID == userID {
 			sendMsg(channelID, "quit playing with yourself, kid")
-			break
-		}
-
-		ctx = mctx.Annotate(ctx, "amount", fields[2])
-		amount, err := strconv.Atoi(fields[2])
-		if err != nil {
-			outErr = err
 			break
 		}
 
@@ -271,6 +283,50 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs! You can reply to this message with `help` if you don't know what that means :)", userID, amount)
+
+	//case "send":
+	//	if l := len(fields); l < 3 || l > 4 {
+	//		sendMsg(channelID, a.helpMsg())
+	//		break
+	//	}
+
+	//	amount, err := strconv.Atoi(fields[1])
+	//	if err != nil {
+	//		outErr = err
+	//		break
+	//	}
+	//	amountStr := strconv.Itoa(amount)
+	//	ctx = mctx.Annotate(ctx, "command", "send", "amount", amount)
+
+	//	addr := fields[2]
+	//	var memo string
+	//	if len(fields) == 4 {
+	//		memo = fields[3]
+	//	}
+
+	//	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	//	_, outErr = a.stellar.client.Send(ctx, stellar.SendOpts{
+	//		From:        a.stellar.kp,
+	//		To:          addr,
+	//		Memo:        memo,
+	//		AssetCode:   "CRYPTICBUCK",
+	//		AssetIssuer: a.stellar.kp.Address(),
+	//		Amount:      amountStr,
+	//	})
+	//	cancel()
+	//	if outErr != nil {
+	//		break
+	//	}
+
+	//	mlog.From(a.cmp).Info("decrementing user balance after send", ctx)
+	//	if err = a.redis.Do(decrCmd.Cmd(
+	//		nil, balancesKey, user.ID, amountStr,
+	//	)); err != nil {
+	//		outErr = err
+	//		break
+	//	}
+
+	//	sendMsg(channelID, "you sent `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings:", addr, amount)
 
 	default:
 		sendMsg(channelID, a.helpMsg())

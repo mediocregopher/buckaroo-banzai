@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/m"
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
@@ -163,64 +164,27 @@ func cmdSend(cmp *mcmp.Component) {
 		mcfg.ParamRequired(),
 		mcfg.ParamUsage("Address to send to."))
 	memo := mcfg.String(cmp, "memo",
-		mcfg.ParamUsage("Memo to attach to transaction"))
+		mcfg.ParamUsage("Memo to attach to transaction. If --dst is a federated stellar address then this memo might get overwritten."))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
-		sourceAccount, err := client.AccountDetail(horizonclient.AccountRequest{
-			AccountID: pair.Address(),
-		})
-		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
-		}
-
-		ctx = mctx.Annotate(ctx,
-			"assetCode", *assetCode,
-			"amount", *amount,
-			"dst", *dstAddress,
-		)
-
-		var asset txnbuild.Asset
-		if strings.ToUpper(*assetCode) == "XLM" {
-			asset = txnbuild.NativeAsset{}
-		} else if *assetIssuer == "" {
+		if strings.ToUpper(*assetCode) != "XLM" && *assetIssuer == "" {
 			return merr.New("asset-issuer required for non-native asset", cmp.Context(), ctx)
-		} else {
-			asset = txnbuild.CreditAsset{
-				Code:   *assetCode,
-				Issuer: *assetIssuer,
-			}
 		}
 
-		op := txnbuild.Payment{
-			Destination: *dstAddress,
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		txRes, err := client.Send(ctx, stellar.SendOpts{
+			From:        pair,
+			To:          *dstAddress,
+			Memo:        *memo,
+			AssetCode:   *assetCode,
+			AssetIssuer: *assetIssuer,
 			Amount:      *amount,
-			Asset:       asset,
-		}
+		})
+		cancel()
 
-		tx := txnbuild.Transaction{
-			SourceAccount: &sourceAccount,
-			Operations:    []txnbuild.Operation{&op},
-			Timebounds:    txnbuild.NewInfiniteTimeout(),
-			Network:       client.NetworkPassphrase,
-		}
-		if *memo != "" {
-			tx.Memo = txnbuild.MemoText(*memo)
-		}
-
-		txXDR, err := tx.BuildSignEncode(pair)
 		if err != nil {
 			return merr.Wrap(err, cmp.Context(), ctx)
 		}
-
-		txRes, err := client.SubmitTransactionXDR(txXDR)
 		jsonDump(txRes)
-		if err != nil {
-			ctx = mctx.Annotate(ctx, "txXDR", txXDR)
-			if herr, ok := err.(*horizonclient.Error); ok {
-				b, _ := json.Marshal(herr.Problem)
-				ctx = mctx.Annotate(ctx, "problem", string(b))
-			}
-			return merr.Wrap(err, cmp.Context(), ctx)
-		}
 		return nil
 	})
 }
