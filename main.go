@@ -16,6 +16,8 @@ import (
 	"github.com/mediocregopher/radix/v3"
 	"github.com/nlopes/slack"
 	"github.com/stellar/go/protocols/horizon/operations"
+
+	"buckaroo-banzai/bank"
 )
 
 var gitRef string
@@ -47,31 +49,6 @@ func instSlackClient(parent *mcmp.Component) *slackClient {
 	return client
 }
 
-func instRedis(parent *mcmp.Component) radix.Client {
-	cmp := parent.Child("redis")
-	client := new(struct{ radix.Client })
-
-	addr := mcfg.String(cmp, "addr",
-		mcfg.ParamDefault("127.0.0.1:6379"),
-		mcfg.ParamUsage("Address redis is listening on"))
-	poolSize := mcfg.Int(cmp, "pool-size",
-		mcfg.ParamDefault(10),
-		mcfg.ParamUsage("Number of connections in pool"))
-	mrun.InitHook(cmp, func(ctx context.Context) error {
-		cmp.Annotate("addr", *addr, "poolSize", *poolSize)
-		mlog.From(cmp).Info("connecting to redis", ctx)
-		var err error
-		client.Client, err = radix.NewPool("tcp", *addr, *poolSize)
-		return err
-	})
-	mrun.ShutdownHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("shutting down redis", ctx)
-		return client.Close()
-	})
-
-	return client
-}
-
 type app struct {
 	cmp                *mcmp.Component
 	botUserID, botUser string
@@ -80,15 +57,13 @@ type app struct {
 	users       map[string]*slack.User
 	usersByName map[string]*slack.User
 
+	bank        bank.Bank
 	slackClient *slackClient
-	redis       radix.Client
 	stellar     *stellarServer
 
 	// if true then buckaroo won't speak or listen to anyone speaking to him.
 	ghost bool
 }
-
-const balancesKey = "balances"
 
 func (a *app) helpMsg() string {
 	return strings.TrimSpace(fmt.Sprintf("Hi, I'm Buckaroo Bonzai, the sole purveyor of CRYPTICBUCKs! You gain one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by talking to me you can give them to other people in the slack team, or even export them as Stellar tokens! @ me or DM me with any of the following commands:\n\n```"+`
@@ -153,32 +128,6 @@ func (a *app) getUserByName(name string) (*slack.User, error) {
 	return user, nil
 }
 
-const errNotEnoughBucks = "you aint got that kind of scratch"
-
-// Keys:[balancesKey] Args:[dstUser, srcUser, amount]
-var giveCmd = radix.NewEvalScript(1, `
-	local amount = tonumber(ARGV[3])
-	local srcAmount = tonumber(redis.call("HGET", KEYS[1], ARGV[2]))
-	if not srcAmount or (srcAmount < amount) then
-		return redis.error_reply("`+errNotEnoughBucks+`")
-	end
-
-	redis.call("HINCRBY", KEYS[1], ARGV[1], amount)
-	redis.call("HINCRBY", KEYS[1], ARGV[2], -1*amount)
-	return "OK"
-`)
-
-// Keys:[balancesKey] Args:[user, amount]
-var decrCmd = radix.NewEvalScript(1, `
-	local amount = tonumber(ARGV[2])
-	local userAmount = tonumber(redis.call("HGET", KEYS[1], ARGV[1]))
-	if not userAmount or (userAmount < amount) then
-		return redis.error_reply("`+errNotEnoughBucks+`")
-	end
-	redis.call("HINCRBY", KEYS[1], ARGV[1], -1*amount)
-	return "OK"
-`)
-
 func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string) error {
 	ctx = mctx.Annotate(ctx, "channelID", channelID)
 	channel, err := a.getChannel(channelID)
@@ -222,19 +171,19 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	case "balance":
 		ctx = mctx.Annotate(ctx, "command", "balance")
 		mlog.From(a.cmp).Info("getting user balance", ctx)
-		var amount int
-		if err := a.redis.Do(radix.Cmd(&amount, "HGET", balancesKey, userID)); err != nil {
+		balance, err := a.bank.Balance(userID)
+		if err != nil {
 			outErr = err
 			break
 		}
-		if amount == 0 {
+		if balance == 0 {
 			sendMsg(channelID, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
-		} else if amount == 1 {
+		} else if balance == 1 {
 			sendMsg(channelID, "you have 1 CRYPTICBUCK!")
-		} else if amount < 0 {
-			sendMsg(channelID, "you have %d CRYPTICBUCKs! that's not even possible :face_with_monocle:", amount)
+		} else if balance < 0 {
+			sendMsg(channelID, "you have %d CRYPTICBUCKs! that's not even possible :face_with_monocle:", balance)
 		} else {
-			sendMsg(channelID, "you have %d CRYPTICBUCKs!", amount)
+			sendMsg(channelID, "you have %d CRYPTICBUCKs!", balance)
 		}
 
 	case "give":
@@ -263,9 +212,8 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 
 		mlog.From(a.cmp).Info("giving bucks", ctx)
-		if err = a.redis.Do(giveCmd.Cmd(
-			nil, balancesKey, dstUser.ID, user.ID, strconv.Itoa(amount),
-		)); err != nil {
+		dstBalance, _, err := a.bank.Transfer(dstUser.ID, user.ID, amount)
+		if err != nil {
 			outErr = err
 			break
 		}
@@ -282,7 +230,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs! You can reply to this message with `help` if you don't know what that means :)", userID, amount)
+		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d! You can reply to this message with `help` if you don't know what that means :)", userID, amount, dstBalance)
 
 	//case "send":
 	//	if l := len(fields); l < 3 || l > 4 {
@@ -359,7 +307,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 		}
 		ctx = mctx.Annotate(ctx, "user", data.ItemUser)
 		mlog.From(a.cmp).Info("incrementing user's balance", ctx)
-		if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "1")); err != nil {
+		if _, err := a.bank.Incr(data.ItemUser, 1); err != nil {
 			mlog.From(a.cmp).Error("error incrementing user's balance", ctx, merr.Context(err))
 		}
 	case "reaction_removed":
@@ -369,7 +317,11 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 		}
 		ctx = mctx.Annotate(ctx, "user", data.ItemUser)
 		mlog.From(a.cmp).Info("decrementing user's balance", ctx)
-		if err := a.redis.Do(radix.Cmd(nil, "HINCRBY", balancesKey, data.ItemUser, "-1")); err != nil {
+
+		// it's possible for the user to not have enough funds to decrement, for
+		// example if they received a reaction, gave the earned buck to someone
+		// else, then the reaction was removed. I guess this is fine?
+		if _, err := a.bank.Incr(data.ItemUser, -1); err != nil && !bank.IsNotEnoughFunds(err) {
 			mlog.From(a.cmp).Error("error decrementing user's balance", ctx, merr.Context(err))
 		}
 	case "message":
@@ -423,7 +375,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 	if err != nil {
 		mlog.From(a.cmp).Warn("error parsing tx amount", ctx, merr.Context(err))
 		return
-	} else if float64(int64(amount)) != amount {
+	} else if float64(int(amount)) != amount {
 		mlog.From(a.cmp).Warn("amount is not a whole number", ctx)
 		return
 	}
@@ -433,8 +385,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 
 	ctx = mctx.Annotate(ctx, "dstUserID", user.ID, "dstUserName", user.Name)
 	mlog.From(a.cmp).Info("incrementing user's account", ctx)
-	err = a.redis.Do(radix.FlatCmd(nil, "HINCRBY", balancesKey, user.ID, int64(amount)))
-	if err != nil {
+	if _, err := a.bank.Incr(user.ID, int(amount)); err != nil {
 		mlog.From(a.cmp).Warn("failed to increment user's balance", ctx, merr.Context(err))
 		return
 	}
@@ -455,7 +406,7 @@ func (a *app) spin(ctx context.Context, lastCursor string) {
 		case payment := <-paymentCh:
 			a.processStellarPayment(payment)
 			pt := payment.PagingToken()
-			if err := a.redis.Do(radix.Cmd(nil, "SET", lastCursorKey, pt)); err != nil {
+			if err := a.bank.Do(radix.Cmd(nil, "SET", lastCursorKey, pt)); err != nil {
 				mlog.From(a.cmp).Error("could not set lastCursorKey",
 					mctx.Annotate(ctx, "lastCursor", pt),
 					merr.Context(err))
@@ -473,7 +424,7 @@ func main() {
 		channels:    map[string]*slack.Channel{},
 		users:       map[string]*slack.User{},
 		usersByName: map[string]*slack.User{},
-		redis:       instRedis(cmp),
+		bank:        bank.Inst(cmp),
 		stellar:     instStellarServer(cmp),
 		slackClient: instSlackClient(cmp),
 	}
@@ -507,7 +458,7 @@ func main() {
 		mlog.From(cmp).Info("fetching last cursor from redis", ctx)
 		var lastCursor string
 		mn := radix.MaybeNil{Rcv: &lastCursor}
-		if err := a.redis.Do(radix.Cmd(&mn, "GET", lastCursorKey)); err != nil {
+		if err := a.bank.Do(radix.Cmd(&mn, "GET", lastCursorKey)); err != nil {
 			return merr.Wrap(err, ctx)
 		}
 

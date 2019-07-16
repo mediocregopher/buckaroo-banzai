@@ -14,7 +14,7 @@ services:
       - STELLAR_DOMAIN
       - STELLAR_SEED
       - STELLAR_HTTP_NET_LISTEN_ADDR=:8000
-      - REDIS_ADDR=redis:6379
+      - BANK_REDIS_ADDR=redis:6379
     depends_on:
       - redis
 
