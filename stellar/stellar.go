@@ -61,6 +61,62 @@ func InstClient(parent *mcmp.Component, child bool) *Client {
 	return client
 }
 
+// ResolveAddr takes in either a stellar address or a federated stellar address,
+// and returns a stellar address and a memo.
+//
+// If a stellar address is given then it is returned directly with an empty
+// memo.
+//
+// If a federated stellar address is given then it is resolved and the
+// associated address/memo are returned.
+func (c *Client) ResolveAddr(ctx context.Context, addr string) (string, string, error) {
+	if _, err := keypair.Parse(addr); err == nil {
+		return addr, "", nil
+	}
+
+	ctx = mctx.Annotate(ctx, "federatedAddr", addr)
+	mlog.From(c.cmp).Info("resolving stellar federation address", ctx)
+	res, err := c.FederationClient.LookupByAddress(addr)
+	if err != nil {
+		return "", "", merr.Wrap(err, c.cmp.Context(), ctx)
+	}
+	addr = res.AccountID
+	ctx = mctx.Annotate(ctx, "addr", addr)
+
+	var memo string
+	if res.MemoType == "" {
+		// ok
+	} else if res.MemoType == "text" {
+		memo = res.Memo.Value
+	} else {
+		return "", "", merr.New("unsupported memo type", c.cmp.Context(),
+			mctx.Annotate(ctx, "memoType", res.MemoType))
+	}
+
+	return addr, memo, nil
+}
+
+// TransactionResult is returned from SubmitTransactionXDR and other methods
+// which submit a transaction to the stellar network.
+type TransactionResult = horizon.TransactionSuccess
+
+// SubmitTransactionXDR attempts to submit the given XDR encoded transaction to
+// the stellar network.
+func (c *Client) SubmitTransactionXDR(ctx context.Context, txXDR string) (TransactionResult, error) {
+	ctx = mctx.Annotate(ctx, "txXDR", txXDR)
+	mlog.From(c.cmp).Info("submitting transaction", ctx)
+	txRes, err := c.Client.SubmitTransactionXDR(txXDR)
+	if err == nil {
+		return txRes, err
+	}
+
+	if herr, ok := err.(*horizonclient.Error); ok {
+		b, _ := json.Marshal(herr.Problem)
+		ctx = mctx.Annotate(ctx, "problem", string(b))
+	}
+	return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
+}
+
 // SendOpts describe the various options which can be sent into the Send method.
 type SendOpts struct {
 	From        *keypair.Full
@@ -71,46 +127,42 @@ type SendOpts struct {
 	Amount      string
 }
 
-// Send is used to send funds from one account to another. It will automatically
-// resolve federated stellar addresses.
-func (c *Client) Send(ctx context.Context, opts SendOpts) (horizon.TransactionSuccess, error) {
-	var txRes horizon.TransactionSuccess
-
-	ctx = mctx.Annotate(ctx, "sendFrom", opts.From.Address(), "sendTo", opts.To)
-	if _, err := keypair.Parse(opts.To); err != nil {
-		mlog.From(c.cmp).Info("resolving stellar federation address", ctx)
-		res, err := c.FederationClient.LookupByAddress(opts.To)
-		if err != nil {
-			return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
-		}
-		opts.To = res.AccountID
-		ctx = mctx.Annotate(ctx, "sendTo", opts.To)
-		if res.MemoType == "" {
-			// ok
-		} else if res.MemoType == "text" {
-			opts.Memo = res.Memo.Value
-		} else {
-			return txRes, merr.New("unsupported memo type", c.cmp.Context(),
-				mctx.Annotate(ctx, "memoType", res.MemoType))
-		}
+func (opts SendOpts) annotate(ctx context.Context) context.Context {
+	ctx = mctx.Annotate(ctx,
+		"sendFrom", opts.From.Address(),
+		"sendTo", opts.To,
+		"sendAssetCode", opts.AssetCode,
+		"sendAmount", opts.Amount,
+	)
+	if opts.Memo != "" {
+		ctx = mctx.Annotate(ctx, "sendMemo", opts.Memo)
 	}
+	if opts.AssetIssuer != "" {
+		ctx = mctx.Annotate(ctx, "sendAssetIssuer", opts.AssetIssuer)
+	}
+	return ctx
+}
+
+// MakeSendXDR constructs a transaction which sends funds according to the given
+// SendOpts, and returns the XDR encoding of that transaction without submitting
+// it to the stellar network.
+func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error) {
+	addr, memo, err := c.ResolveAddr(ctx, opts.To)
+	if err != nil {
+		return "", merr.Wrap(err, c.cmp.Context(), ctx)
+	}
+	opts.To = addr
+	if memo != "" {
+		opts.Memo = memo
+	}
+	ctx = opts.annotate(ctx)
 
 	mlog.From(c.cmp).Info("retrieving source account", ctx)
 	sourceAccount, err := c.AccountDetail(horizonclient.AccountRequest{
 		AccountID: opts.From.Address(),
 	})
 	if err != nil {
-		return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
-	}
-
-	ctx = mctx.Annotate(ctx,
-		"sendAssetCode", opts.AssetCode,
-		"sendAmount", opts.Amount)
-	if opts.Memo != "" {
-		ctx = mctx.Annotate(ctx, "sendMemo", opts.Memo)
-	}
-	if opts.AssetIssuer != "" {
-		ctx = mctx.Annotate(ctx, "sendAssetIssuer", opts.AssetIssuer)
+		return "", merr.Wrap(err, c.cmp.Context(), ctx)
 	}
 
 	asset := txnbuild.CreditAsset{
@@ -145,19 +197,20 @@ func (c *Client) Send(ctx context.Context, opts SendOpts) (horizon.TransactionSu
 
 	txXDR, err := tx.BuildSignEncode(opts.From)
 	if err != nil {
-		return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
+		return "", merr.Wrap(err, c.cmp.Context(), ctx)
+	}
+	return txXDR, nil
+}
+
+// Send is used to send funds from one account to another. It will automatically
+// resolve federated stellar addresses.
+func (c *Client) Send(ctx context.Context, opts SendOpts) (TransactionResult, error) {
+	txXDR, err := c.MakeSendXDR(ctx, opts)
+	if err != nil {
+		return TransactionResult{}, merr.Wrap(err, c.cmp.Context(), ctx)
 	}
 
-	mlog.From(c.cmp).Info("submitting transaction", ctx)
-	if txRes, err = c.SubmitTransactionXDR(txXDR); err != nil {
-		ctx = mctx.Annotate(ctx, "txXDR", txXDR)
-		if herr, ok := err.(*horizonclient.Error); ok {
-			b, _ := json.Marshal(herr.Problem)
-			ctx = mctx.Annotate(ctx, "problem", string(b))
-		}
-		return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
-	}
-	return txRes, nil
+	return c.SubmitTransactionXDR(ctx, txXDR)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
