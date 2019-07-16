@@ -3,14 +3,11 @@
 package bank
 
 import (
-	"context"
 	"strconv"
 
-	"github.com/mediocregopher/mediocre-go-lib/mcfg"
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
+	"github.com/mediocregopher/mediocre-go-lib/mdb/mredis"
 	"github.com/mediocregopher/mediocre-go-lib/merr"
-	"github.com/mediocregopher/mediocre-go-lib/mlog"
-	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/mediocregopher/radix/v3"
 )
 
@@ -37,31 +34,6 @@ type Bank interface {
 	Transfer(dstUserID, srcUserID string, amount int) (newDstBalance, newSrcBalanc int, err error)
 }
 
-func instRedis(parent *mcmp.Component) radix.Client {
-	cmp := parent.Child("redis")
-	client := new(struct{ radix.Client })
-
-	addr := mcfg.String(cmp, "addr",
-		mcfg.ParamDefault("127.0.0.1:6379"),
-		mcfg.ParamUsage("Address redis is listening on"))
-	poolSize := mcfg.Int(cmp, "pool-size",
-		mcfg.ParamDefault(10),
-		mcfg.ParamUsage("Number of connections in pool"))
-	mrun.InitHook(cmp, func(ctx context.Context) error {
-		cmp.Annotate("addr", *addr, "poolSize", *poolSize)
-		mlog.From(cmp).Info("connecting to redis", ctx)
-		var err error
-		client.Client, err = radix.NewPool("tcp", *addr, *poolSize)
-		return err
-	})
-	mrun.ShutdownHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("shutting down redis", ctx)
-		return client.Close()
-	})
-
-	return client
-}
-
 type redisBank struct {
 	cmp         *mcmp.Component
 	balancesKey string
@@ -75,7 +47,7 @@ func Inst(parent *mcmp.Component) Bank {
 	return &redisBank{
 		cmp:         cmp,
 		balancesKey: "balances",
-		Client:      instRedis(cmp),
+		Client:      mredis.InstRedis(cmp),
 	}
 }
 
