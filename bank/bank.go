@@ -3,7 +3,9 @@
 package bank
 
 import (
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
 	"github.com/mediocregopher/mediocre-go-lib/mdb/mredis"
@@ -34,30 +36,46 @@ type Bank interface {
 	Transfer(dstUserID, srcUserID string, amount int) (newDstBalance, newSrcBalanc int, err error)
 }
 
+///////////////////////////////////////////////////////////////////////////////
+
+const redisBankReadTimeout = 10 * time.Second
+
 type redisBank struct {
-	cmp         *mcmp.Component
-	balancesKey string
-	radix.Client
+	cmp       *mcmp.Component
+	keyPrefix string
+	*mredis.Redis
+
+	// used for ExportingBank
+	instanceID string
 }
 
 // Inst instantiates a Bank which will be configured and initialized when the
 // Init hook is run.
-func Inst(parent *mcmp.Component) Bank {
+func Inst(parent *mcmp.Component) ExportingBank {
 	cmp := parent.Child("bank")
 	return &redisBank{
-		cmp:         cmp,
-		balancesKey: "balances",
-		Client:      mredis.InstRedis(cmp),
+		cmp:       cmp,
+		keyPrefix: "buckaroo-banzai:bank",
+		Redis: mredis.InstRedis(cmp, mredis.RedisDialOpts(
+			radix.DialReadTimeout(redisBankReadTimeout),
+		)),
 	}
 }
 
+func (b *redisBank) key(suffix string) string {
+	return fmt.Sprintf("%s:%s", b.keyPrefix, suffix)
+}
+
+func (b *redisBank) balancesKey() string { return b.key("balances") }
+
 func (b *redisBank) Balance(userID string) (int, error) {
 	var amount int
-	err := b.Do(radix.Cmd(&amount, "HGET", b.balancesKey, userID))
+	err := b.Do(radix.Cmd(&amount, "HGET", b.balancesKey(), userID))
 	return amount, merr.Wrap(err, b.cmp.Context())
 }
 
 // Keys:[balancesKey] Args:[user, amount]
+// TODO should this just HSET to 0 if the new balance would be less than zero?
 var incrCmd = radix.NewEvalScript(1, `
 	local toIncr = tonumber(ARGV[2])
 	local balance = tonumber(redis.call("HGET", KEYS[1], ARGV[1]))
@@ -71,7 +89,7 @@ var incrCmd = radix.NewEvalScript(1, `
 
 func (b *redisBank) Incr(userID string, by int) (int, error) {
 	var newBalance int
-	err := b.Do(incrCmd.Cmd(&newBalance, b.balancesKey, userID, strconv.Itoa(by)))
+	err := b.Do(incrCmd.Cmd(&newBalance, b.balancesKey(), userID, strconv.Itoa(by)))
 	return newBalance, merr.Wrap(err, b.cmp.Context())
 }
 
@@ -92,7 +110,7 @@ var transferCmd = radix.NewEvalScript(1, `
 func (b *redisBank) Transfer(dstUserID, srcUserID string, amount int) (int, int, error) {
 	var newBalances []int
 	err := b.Do(transferCmd.Cmd(
-		&newBalances, b.balancesKey, dstUserID, srcUserID, strconv.Itoa(amount),
+		&newBalances, b.balancesKey(), dstUserID, srcUserID, strconv.Itoa(amount),
 	))
 	if err != nil {
 		return 0, 0, merr.Wrap(err, b.cmp.Context())

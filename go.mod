@@ -16,8 +16,8 @@ require (
 	github.com/lusis/slack-test v0.0.0-20190426140909-c40012f20018 // indirect
 	github.com/manucorporat/sse v0.0.0-20160126180136-ee05b128a739 // indirect
 	github.com/mattn/go-colorable v0.1.1 // indirect
-	github.com/mediocregopher/mediocre-go-lib v0.0.0-20190716044201-0e64f16f032d
-	github.com/mediocregopher/radix/v3 v3.3.1-0.20190716044027-c72935c74ab3
+	github.com/mediocregopher/mediocre-go-lib v0.0.0-20190730033908-c20f884d6844
+	github.com/mediocregopher/radix/v3 v3.3.2
 	github.com/moul/http2curl v1.0.0 // indirect
 	github.com/nlopes/slack v0.5.0
 	github.com/nullstyle/go-xdr v0.0.0-20180726165426-f4c839f75077 // indirect

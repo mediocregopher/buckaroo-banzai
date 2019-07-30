@@ -44,7 +44,7 @@ func TestPersistentBank(t *T) {
 	}
 
 	mtest.Run(cmp, t, func() {
-		bank.(*redisBank).balancesKey = "testingBalances"
+		bank.(*redisBank).keyPrefix = "test:bank"
 		userA, userB := mrand.Hex(8), mrand.Hex(8)
 
 		massert.Require(t,

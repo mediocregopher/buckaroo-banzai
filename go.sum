@@ -93,10 +93,10 @@ github.com/mattn/go-isatty v0.0.5 h1:tHXDdz1cpzGaovsTB+TVB8q90WEokoVmfMqoVcrLUgw
 github.com/mattn/go-isatty v0.0.5/go.mod h1:Iq45c/XA43vh69/j3iqttzPXn0bhXyGjM0Hdxcsrc5s=
 github.com/mattn/go-sqlite3 v1.9.0/go.mod h1:FPy6KqzDD04eiIsT53CuJW3U88zkxoIYsOqkbpncsNc=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
-github.com/mediocregopher/mediocre-go-lib v0.0.0-20190716044201-0e64f16f032d h1:vkxUcZamweOGRRnkk5BQVApY6KZJH+fK5hcTsR8g/Go=
-github.com/mediocregopher/mediocre-go-lib v0.0.0-20190716044201-0e64f16f032d/go.mod h1:u2NKrhG5ornTG1rUsc4tqRjHP6wCDtCcKYR1yQHzgX4=
-github.com/mediocregopher/radix/v3 v3.3.1-0.20190716044027-c72935c74ab3 h1:UjRk86epRQI7V3yFJaR7nYiahIoCMLI/1YjtH5ANfkw=
-github.com/mediocregopher/radix/v3 v3.3.1-0.20190716044027-c72935c74ab3/go.mod h1:RsC7cELtyL4TGkg0nwRPTa+J2TXZ0dh/ruohD3rnjMk=
+github.com/mediocregopher/mediocre-go-lib v0.0.0-20190730033908-c20f884d6844 h1:8lJXxhfBz+VYGUk/NrUqNp5Bav4HJN0UrzMxpJRWyqo=
+github.com/mediocregopher/mediocre-go-lib v0.0.0-20190730033908-c20f884d6844/go.mod h1:J2F77FFnUNacG2WXt758apAyt0VW3dKeZ/xOOGCfLSw=
+github.com/mediocregopher/radix/v3 v3.3.2 h1:2gAC5aDBWQr1LBgaNQiVLb2LGX4lvkARDkfjsuonKJE=
+github.com/mediocregopher/radix/v3 v3.3.2/go.mod h1:RsC7cELtyL4TGkg0nwRPTa+J2TXZ0dh/ruohD3rnjMk=
 github.com/microcosm-cc/bluemonday v1.0.1/go.mod h1:hsXNsILzKxV+sX77C5b8FSuKF00vh2OMYv+xgHpAMF4=
 github.com/moul/http2curl v1.0.0 h1:dRMWoAtb+ePxMlLkrCbAqh4TlPHXvoGUSQ323/9Zahs=
 github.com/moul/http2curl v1.0.0/go.mod h1:8UbvGypXm98wA/IqH45anm5Y2Z6ep6O31QGOAZ3H0fQ=
