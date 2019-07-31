@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/m"
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
@@ -18,46 +20,17 @@ import (
 	"github.com/stellar/go/protocols/horizon/operations"
 
 	"buckaroo-banzai/bank"
+	"buckaroo-banzai/stellar"
 )
+
+const exportProtocolStellar = "stellar"
 
 var gitRef string
 
-type slackClient struct {
-	Client *slack.Client
-	RTM    *slack.RTM
-}
-
-func instSlackClient(parent *mcmp.Component) *slackClient {
-	cmp := parent.Child("slack")
-	client := new(slackClient)
-
-	token := mcfg.String(cmp, "token",
-		mcfg.ParamRequired(),
-		mcfg.ParamUsage("API token for the buckaroo bonzai bot"))
-	mrun.InitHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("connecting to slack", ctx)
-		client.Client = slack.New(*token)
-		client.RTM = client.Client.NewRTM()
-		go client.RTM.ManageConnection()
-		return nil
-	})
-	mrun.ShutdownHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("shutting down slack", ctx)
-		return client.RTM.Disconnect()
-	})
-
-	return client
-}
-
 type app struct {
-	cmp                *mcmp.Component
-	botUserID, botUser string
+	cmp *mcmp.Component
 
-	channels    map[string]*slack.Channel
-	users       map[string]*slack.User
-	usersByName map[string]*slack.User
-
-	bank        bank.Bank
+	bank        bank.ExportingBank
 	slackClient *slackClient
 	stellar     *stellarServer
 
@@ -71,79 +44,26 @@ func (a *app) helpMsg() string {
 @%s give <amount> <user>                     // Give CRYPTICBUCKs to <user> (how nice!)
 @%s send <amount> <stellar address> [<memo>] // Send CRYPTICBUCKs to <stellar address>
 `+"```\nNOTE that you must have a trustline established to %s for the token CRYPTICBUCKs to use the export command",
-		a.botUser, a.botUser, a.botUser, a.stellar.kp.Address(),
+		a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.stellar.kp.Address(),
 	))
-}
-
-func (a *app) getChannel(id string) (*slack.Channel, error) {
-	if channel, ok := a.channels[id]; ok {
-		return channel, nil
-	}
-	channel, err := a.slackClient.Client.GetConversationInfo(id, true)
-	if err == nil {
-		a.channels[id] = channel
-	}
-	return channel, err
-}
-
-func (a *app) getUser(id string) (*slack.User, error) {
-	id = strings.TrimPrefix(id, "<")
-	id = strings.TrimPrefix(id, "@")
-	id = strings.TrimSuffix(id, ">")
-	if user, ok := a.users[id]; ok {
-		return user, nil
-	}
-
-	user, err := a.slackClient.Client.GetUserInfo(id)
-	if err == nil {
-		a.users[id] = user
-	}
-	return user, err
-}
-
-func (a *app) refreshUsersByName() error {
-	users, err := a.slackClient.Client.GetUsers()
-	if err != nil {
-		return merr.Wrap(err, a.cmp.Context())
-	}
-	a.usersByName = make(map[string]*slack.User, len(users))
-	for i, user := range users {
-		a.usersByName[user.Name] = &users[i]
-	}
-	return nil
-}
-
-func (a *app) getUserByName(name string) (*slack.User, error) {
-	user, ok := a.usersByName[name]
-	if ok {
-		return user, nil
-	} else if err := a.refreshUsersByName(); err != nil {
-		return nil, merr.Wrap(err, a.cmp.Context())
-	}
-	user, ok = a.usersByName[name]
-	if !ok {
-		return nil, merr.New("user not found",
-			mctx.Annotate(a.cmp.Context(), "user", user))
-	}
-	return user, nil
 }
 
 func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string) error {
 	ctx = mctx.Annotate(ctx, "channelID", channelID)
-	channel, err := a.getChannel(channelID)
+	channel, err := a.slackClient.getChannel(channelID)
 	if err != nil {
 		return merr.Wrap(err, ctx)
 	}
 	ctx = mctx.Annotate(ctx, "userID", userID, "channel", channel.Name)
 
-	user, err := a.getUser(userID)
+	user, err := a.slackClient.getUser(userID)
 	if err != nil {
 		return merr.Wrap(err, ctx)
 	}
 	ctx = mctx.Annotate(ctx, "user", user.Name)
 
 	msg = strings.TrimSpace(msg)
-	prefix := "<@" + a.botUserID + ">"
+	prefix := "<@" + a.slackClient.botUserID + ">"
 	if !strings.HasPrefix(msg, prefix) && !channel.IsIM {
 		return nil
 	}
@@ -199,7 +119,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 
 		ctx = mctx.Annotate(ctx, "command", "give", "dstUserID", fields[2])
-		dstUser, err := a.getUser(fields[2])
+		dstUser, err := a.slackClient.getUser(fields[2])
 		if err != nil {
 			outErr = err
 			break
@@ -232,49 +152,59 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d! You can reply to this message with `help` if you don't know what that means :)", userID, amount, dstBalance)
 
-	//case "send":
-	//	if l := len(fields); l < 3 || l > 4 {
-	//		sendMsg(channelID, a.helpMsg())
-	//		break
-	//	}
+	case "send":
+		if l := len(fields); l < 3 || l > 4 {
+			sendMsg(channelID, a.helpMsg())
+			break
+		}
 
-	//	amount, err := strconv.Atoi(fields[1])
-	//	if err != nil {
-	//		outErr = err
-	//		break
-	//	}
-	//	amountStr := strconv.Itoa(amount)
-	//	ctx = mctx.Annotate(ctx, "command", "send", "amount", amount)
+		amount, err := strconv.Atoi(fields[1])
+		if err != nil {
+			outErr = err
+			break
+		}
+		amountStr := strconv.Itoa(amount)
+		ctx = mctx.Annotate(ctx, "command", "send", "amount", amount)
 
-	//	addr := fields[2]
-	//	var memo string
-	//	if len(fields) == 4 {
-	//		memo = fields[3]
-	//	}
+		addr := fields[2]
+		var memo string
+		if len(fields) == 4 {
+			memo = fields[3]
+			ctx = mctx.Annotate(ctx, "memo", memo)
+		}
 
-	//	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	//	_, outErr = a.stellar.client.Send(ctx, stellar.SendOpts{
-	//		From:        a.stellar.kp,
-	//		To:          addr,
-	//		Memo:        memo,
-	//		AssetCode:   "CRYPTICBUCK",
-	//		AssetIssuer: a.stellar.kp.Address(),
-	//		Amount:      amountStr,
-	//	})
-	//	cancel()
-	//	if outErr != nil {
-	//		break
-	//	}
+		mlog.From(a.cmp).Info("constructing send XDR", ctx)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		var txXDR string
+		txXDR, outErr = a.stellar.client.MakeSendXDR(ctx, stellar.SendOpts{
+			From:        a.stellar.kp,
+			To:          addr,
+			Memo:        memo,
+			AssetCode:   "CRYPTICBUCK",
+			AssetIssuer: a.stellar.kp.Address(),
+			Amount:      amountStr,
+		})
+		if outErr != nil {
+			break
+		}
 
-	//	mlog.From(a.cmp).Info("decrementing user balance after send", ctx)
-	//	if err = a.redis.Do(decrCmd.Cmd(
-	//		nil, balancesKey, user.ID, amountStr,
-	//	)); err != nil {
-	//		outErr = err
-	//		break
-	//	}
+		mlog.From(a.cmp).Info("submitting XDR to the bank", ctx)
+		var txID string
+		txID, outErr = a.bank.SubmitExport(bank.Export{
+			FromUserID:      userID,
+			Amount:          amount,
+			Protocol:        exportProtocolStellar,
+			ProtocolPayload: txXDR,
+		})
+		if outErr != nil {
+			break
+		}
 
-	//	sendMsg(channelID, "you sent `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings:", addr, amount)
+		ctx = mctx.Annotate(ctx, "txID", txID)
+		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
+
+		sendMsg(channelID, "you sent `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
 
 	default:
 		sendMsg(channelID, a.helpMsg())
@@ -329,7 +259,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 			return
 		}
 		data, ok := e.Data.(*slack.MessageEvent)
-		if !ok || data.User == a.botUserID {
+		if !ok || data.User == a.slackClient.botUserID {
 			return
 		} else if err := a.processSlackMsg(ctx, data.Channel, data.User, data.Text); err != nil {
 			ctx = mctx.Annotate(ctx, "text", data.Text)
@@ -362,7 +292,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 
 	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
 	userName := strings.TrimSuffix(tx.Memo, "*"+a.stellar.domain)
-	user, err := a.getUserByName(userName)
+	user, err := a.slackClient.getUserByName(userName)
 	if err != nil {
 		mlog.From(a.cmp).Warn("error retrieving user info", ctx, merr.Context(err))
 		return
@@ -394,7 +324,7 @@ func (a *app) processStellarPayment(payment operations.Payment) {
 const lastCursorKey = "lastCursor"
 
 func (a *app) spin(ctx context.Context, lastCursor string) {
-	if err := a.refreshUsersByName(); err != nil {
+	if err := a.slackClient.refreshUsersByName(true); err != nil {
 		mlog.From(a.cmp).Fatal("failed to retrieve full user list", a.cmp.Context(), ctx, merr.Context(err))
 	}
 
@@ -417,13 +347,62 @@ func (a *app) spin(ctx context.Context, lastCursor string) {
 	}
 }
 
+func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error {
+	ctx = e.Annotate(ctx)
+	if e.Protocol != exportProtocolStellar {
+		return merr.New("unknown export protocol", a.cmp.Context(), ctx)
+	}
+
+	mlog.From(a.cmp).Info("submitting stellar tx", ctx)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res, err := a.stellar.client.SubmitTransactionXDR(ctx, e.ProtocolPayload)
+	if err != nil {
+		return merr.Wrap(err, a.cmp.Context(), ctx)
+	}
+
+	txLink := res.Links.Transaction.Href
+	ctx = mctx.Annotate(ctx, "stellarTXLink", txLink)
+	mlog.From(a.cmp).Info("stellar tx successfully submitted", ctx)
+
+	if err := e.Ack(); err != nil {
+		// if there is an error acking, don't message the user, it'll just cause
+		// them to potentially get a duplicate message when the export is
+		// retried later.
+		return merr.Wrap(err, a.cmp.Context(), ctx)
+	}
+
+	imChannel, err := a.slackClient.getIMChannel(e.FromUserID)
+	if err != nil {
+		mlog.From(a.cmp).Warn("could not retrieve user IM channel to send tx success msg", ctx, merr.Context(err))
+		// this isn't a big deal, the tx was successful, just bail
+		return nil
+	}
+
+	msgStr := fmt.Sprintf("Your transaction of %d CRYPTICBUCK(s) was successful!\n%s", e.Amount, txLink)
+	outMsg := a.slackClient.RTM.NewOutgoingMessage(msgStr, imChannel)
+	a.slackClient.RTM.SendMessage(outMsg)
+
+	return nil
+}
+
+func (a *app) exportSpin(ctx context.Context, ch chan bank.ExportInProgress) {
+	for {
+		select {
+		case exportInProg := <-ch:
+			if err := a.processExport(ctx, exportInProg); err != nil {
+				mlog.From(a.cmp).Error("error encountered processing export", ctx, merr.Context(err))
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func main() {
 	cmp := m.RootServiceComponent()
 	a := app{
 		cmp:         cmp,
-		channels:    map[string]*slack.Channel{},
-		users:       map[string]*slack.User{},
-		usersByName: map[string]*slack.User{},
 		bank:        bank.Inst(cmp),
 		stellar:     instStellarServer(cmp),
 		slackClient: instSlackClient(cmp),
@@ -439,21 +418,8 @@ func main() {
 		return nil
 	})
 
-	mrun.InitHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("getting bot user info", ctx)
-		res, err := a.slackClient.Client.AuthTest()
-		if err != nil {
-			return err
-		}
-		a.botUser = res.User
-		a.botUserID = res.UserID
-		cmp.Annotate("botUser", a.botUser, "botUserID", a.botUserID)
-		mlog.From(cmp).Info("got bot user info", ctx)
-		return nil
-	})
-
-	spinCtx, cancel := context.WithCancel(context.Background())
-	spinWait := make(chan struct{})
+	runCtx, cancel := context.WithCancel(context.Background())
+	wg := new(sync.WaitGroup)
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		mlog.From(cmp).Info("fetching last cursor from redis", ctx)
 		var lastCursor string
@@ -464,21 +430,42 @@ func main() {
 
 		mlog.From(cmp).Info("beginning app loop",
 			mctx.Annotate(ctx, "lastCursor", lastCursor))
+		wg.Add(1)
 		go func() {
-			a.spin(spinCtx, lastCursor)
-			close(spinWait)
+			defer wg.Done()
+			a.spin(runCtx, lastCursor)
 		}()
+
+		exportCh := make(chan bank.ExportInProgress)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.exportSpin(runCtx, exportCh)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mlog.From(cmp).Info("starting process to consume submitted exports", ctx)
+			for {
+				err := a.bank.ConsumeExports(runCtx, exportCh)
+				if merr.Base(err) == context.Canceled {
+					return
+				} else if err != nil {
+					mlog.From(cmp).Error("error consuming exports", ctx, merr.Context(err))
+					time.Sleep(1 * time.Second)
+				}
+			}
+		}()
+
 		return nil
 	})
+
 	mrun.ShutdownHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("shutting down main thread", ctx)
+		mlog.From(cmp).Info("shutting down main threads", ctx)
 		cancel()
-		select {
-		case <-spinWait:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		wg.Wait()
+		return nil
 	})
 
 	m.Exec(cmp)

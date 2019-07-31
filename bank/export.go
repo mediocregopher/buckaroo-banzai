@@ -24,11 +24,16 @@ type Export struct {
 	// to a particular protocol (e.g. a crypto chain). It's content is specific
 	// to the protocol.
 	ProtocolPayload string
+}
 
-	// HumanReadable string describing the destination of the transfer. It is
-	// expected to be used in a sentence like "Your funds have been successfully
-	// transferred to _______".
-	HumanReadable string
+// Annotate returns the given Context annotated with information about the
+// Export.
+func (e Export) Annotate(ctx context.Context) context.Context {
+	return mctx.Annotate(ctx,
+		"exportFromUserID", e.FromUserID,
+		"exportAmount", e.Amount,
+		"exportProtocol", e.Protocol,
+	)
 }
 
 // ExportInProgress describes an Export which has yet to be successfully
@@ -45,6 +50,13 @@ type ExportInProgress struct {
 	// retried again. This means that _all_ aspects of consuming an Export
 	// should be idempotent.
 	Ack, Nack func() error
+}
+
+// Annotate returns the given Context annotated with information about the
+// ExportInProgress.
+func (ep ExportInProgress) Annotate(ctx context.Context) context.Context {
+	ctx = ep.Export.Annotate(ctx)
+	return mctx.Annotate(ctx, "exportID", ep.ID)
 }
 
 // ExportingBank describes a Bank which is capable of enabling Export actions.
