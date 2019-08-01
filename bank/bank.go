@@ -26,11 +26,6 @@ func IsNotEnoughFunds(err error) bool {
 
 // Bank describes a thread-safe store of user funds.
 type Bank interface {
-	// TODO the only reason Client is part of this interface is because Bank is
-	// overloaded to also be the storage for stellar's lastCursor stuff. Once
-	// instRedis gets moved to mediocre-go-lib we can have two redis insts, and
-	// use one for last-cursor.
-	radix.Client
 	Balance(userID string) (int, error)
 	Incr(userID string, by int) (newBalance int, err error)
 	Transfer(dstUserID, srcUserID string, amount int) (newDstBalance, newSrcBalanc int, err error)

@@ -15,7 +15,6 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
-	"github.com/mediocregopher/radix/v3"
 	"github.com/nlopes/slack"
 	"github.com/stellar/go/protocols/horizon/operations"
 
@@ -282,84 +281,60 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 	}
 }
 
-func (a *app) processStellarPayment(payment operations.Payment) {
-	ctx := mctx.Annotate(a.cmp.Context(),
-		"paymentOpID", payment.ID,
-		"paymentCursor", payment.PT,
-		"paymentFrom", payment.From,
-		"paymentCode", payment.Code,
-		"paymentIssuer", payment.Issuer,
-		"paymentAmount", payment.Amount,
-	)
+func (a *app) processSlackEvents(ctx context.Context) {
+
+	for {
+		select {
+		case e := <-a.slackClient.RTM.IncomingEvents:
+			a.processSlackEvent(e)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (a *app) processStellarPayment(ctx context.Context, payment operations.Payment) error {
 	mlog.From(a.cmp).Info("processing incoming stellar transaction", ctx)
 
 	if payment.Code != "CRYPTICBUCK" || payment.Issuer != a.stellar.kp.Address() {
-		mlog.From(a.cmp).Warn("payment is not in buckaroo's currency", ctx)
-		return
+		return merr.New("payment is not in buckaroo's currency", a.cmp.Context(), ctx)
 	}
 
 	tx, err := a.stellar.client.TransactionDetail(payment.GetTransactionHash())
 	if err != nil {
-		mlog.From(a.cmp).Warn("failed to retrieve operation's tx", ctx, merr.Context(err))
-		return
+		return merr.New("failed to retrieve operation's tx", a.cmp.Context(), ctx)
 	}
 
 	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
 	userName := strings.TrimSuffix(tx.Memo, "*"+a.stellar.domain)
 	user, err := a.slackClient.getUserByName(userName)
 	if err != nil {
-		mlog.From(a.cmp).Warn("error retrieving user info", ctx, merr.Context(err))
-		return
+		return merr.Wrap(err, a.cmp.Context(), ctx)
 	} else if user == nil { // not sure if this happens, but whatevs
-		mlog.From(a.cmp).Warn("incoming stellar transaction destined for invalid user", ctx)
-		return
+		return merr.New("incoming stellar transaction destined for invalid user", a.cmp.Context(), ctx)
 	}
 
 	amount, err := strconv.ParseFloat(payment.Amount, 64)
 	if err != nil {
-		mlog.From(a.cmp).Warn("error parsing tx amount", ctx, merr.Context(err))
-		return
+		return merr.Wrap(err, a.cmp.Context(), ctx)
 	} else if float64(int(amount)) != amount {
-		mlog.From(a.cmp).Warn("amount is not a whole number", ctx)
-		return
+		return merr.New("amount is not a whole number", a.cmp.Context(), ctx)
 	}
 
 	// TODO is it possible to reject a stellar tx? If so we should do that for
 	// any of the above cases
 
-	ctx = mctx.Annotate(ctx, "dstUserID", user.ID, "dstUserName", user.Name)
+	ctx = mctx.Annotate(ctx, "dstUserID", user.ID, "dstUserName", user.Name, "amount", amount)
 	mlog.From(a.cmp).Info("incrementing user's account", ctx)
 	if _, err := a.bank.Incr(user.ID, int(amount)); err != nil {
-		mlog.From(a.cmp).Warn("failed to increment user's balance", ctx, merr.Context(err))
-		return
+		return merr.Wrap(err, a.cmp.Context(), ctx)
 	}
+	return nil
 }
 
-const lastCursorKey = "lastCursor"
-
-func (a *app) spin(ctx context.Context, lastCursor string) {
-	if err := a.slackClient.refreshUsersByName(true); err != nil {
-		mlog.From(a.cmp).Fatal("failed to retrieve full user list", a.cmp.Context(), ctx, merr.Context(err))
-	}
-
-	paymentCh := a.stellar.receivePayments(ctx, lastCursor)
-	for {
-		select {
-		case e := <-a.slackClient.RTM.IncomingEvents:
-			a.processSlackEvent(e)
-		case payment := <-paymentCh:
-			a.processStellarPayment(payment)
-			pt := payment.PagingToken()
-			if err := a.bank.Do(radix.Cmd(nil, "SET", lastCursorKey, pt)); err != nil {
-				mlog.From(a.cmp).Error("could not set lastCursorKey",
-					mctx.Annotate(ctx, "lastCursor", pt),
-					merr.Context(err))
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
+///////////////////////////////////////////////////////////////////////////////
 
 func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error {
 	ctx = e.Annotate(ctx)
@@ -400,7 +375,7 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 	return nil
 }
 
-func (a *app) exportSpin(ctx context.Context, ch chan bank.ExportInProgress) {
+func (a *app) processExports(ctx context.Context, ch chan bank.ExportInProgress) {
 	for {
 		select {
 		case exportInProg := <-ch:
@@ -412,6 +387,8 @@ func (a *app) exportSpin(ctx context.Context, ch chan bank.ExportInProgress) {
 		}
 	}
 }
+
+///////////////////////////////////////////////////////////////////////////////
 
 func main() {
 	cmp := m.RootServiceComponent()
@@ -435,41 +412,51 @@ func main() {
 	runCtx, cancel := context.WithCancel(context.Background())
 	wg := new(sync.WaitGroup)
 	mrun.InitHook(cmp, func(ctx context.Context) error {
-		mlog.From(cmp).Info("fetching last cursor from redis", ctx)
-		var lastCursor string
-		mn := radix.MaybeNil{Rcv: &lastCursor}
-		if err := a.bank.Do(radix.Cmd(&mn, "GET", lastCursorKey)); err != nil {
-			return merr.Wrap(err, ctx)
+		mlog.From(cmp).Info("refreshing list of slack users")
+		if err := a.slackClient.refreshUsersByName(true); err != nil {
+			mlog.From(a.cmp).Fatal("failed to retrieve full user list", a.cmp.Context(), ctx, merr.Context(err))
 		}
 
-		mlog.From(cmp).Info("beginning app loop",
-			mctx.Annotate(ctx, "lastCursor", lastCursor))
+		mlog.From(cmp).Info("starting main threads")
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			a.spin(runCtx, lastCursor)
+			mlog.From(cmp).Info("starting thread to process slack events", ctx)
+			a.processSlackEvents(runCtx)
+			mlog.From(cmp).Info("stopping thread to process slack events", ctx)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mlog.From(cmp).Info("starting thread to process incoming stellar payments", ctx)
+			a.stellar.receivePayments(runCtx, a.processStellarPayment)
+			mlog.From(cmp).Info("stopping thread to process incoming stellar payments", ctx)
 		}()
 
 		exportCh := make(chan bank.ExportInProgress)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			a.exportSpin(runCtx, exportCh)
+			mlog.From(cmp).Info("starting thread to read submitted exports from the bank", ctx)
+			a.processExports(runCtx, exportCh)
+			mlog.From(cmp).Info("stopping thread to read submitted exports from the bank", ctx)
 		}()
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			mlog.From(cmp).Info("starting process to consume submitted exports", ctx)
+			mlog.From(cmp).Info("starting thread to consume submitted exports", ctx)
 			for {
 				err := a.bank.ConsumeExports(runCtx, exportCh)
 				if merr.Base(err) == context.Canceled {
-					return
+					break
 				} else if err != nil {
 					mlog.From(cmp).Error("error consuming exports", ctx, merr.Context(err))
 					time.Sleep(1 * time.Second)
 				}
 			}
+			mlog.From(cmp).Info("stopping thread to consume submitted exports", ctx)
 		}()
 
 		return nil
