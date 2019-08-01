@@ -38,23 +38,34 @@ type app struct {
 	ghost bool
 }
 
-func (a *app) helpMsg() string {
-	return strings.TrimSpace(fmt.Sprintf("Hi, I'm Buckaroo Bonzai, the sole purveyor of CRYPTICBUCKs! You gain one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by talking to me you can give them to other people in the slack team, or even export them as Stellar tokens! @ me or DM me with any of the following commands:\n\n```"+`
-@%s balance                                  // I will respond with your balance
-@%s give <amount> <user>                     // Give CRYPTICBUCKs to <user> (how nice!)
-@%s send <amount> <stellar address> [<memo>] // Send CRYPTICBUCKs to <stellar address>
-`+"```\nNOTE that you must have a trustline established to %s for the token CRYPTICBUCKs to use the export command",
-		a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.stellar.kp.Address(),
+func (a *app) helpMsg(isIM bool) string {
+	var suffix string
+	if !isIM {
+		suffix = "s"
+	}
+	return strings.TrimSpace(fmt.Sprintf("sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole purveyor of CRYPTICBUCKs. you gain one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as Stellar tokens!\n\n*Commands*:\n```"+`
+@%s balance                                      // I will respond with your balance
+@%s give <amount> <user>                         // Give CRYPTICBUCKs to <user> (what a chump)
+@%s withdraw <amount> <stellar address> [<memo>] // Withdraw CRYPTICBUCKs to <stellar address>
+`+"```\nNOTE that your stellar account must have a trustline established to `%s` for the token CRYPTICBUCKs to use the withdraw command",
+		suffix, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.stellar.kp.Address(),
 	))
 }
 
 func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string) error {
+	if userID == a.slackClient.botUserID {
+		// ignore messages sent by the bot itself. Can happen during testing
+		// when there's two running bots
+		return nil
+	}
+
 	ctx = mctx.Annotate(ctx, "channelID", channelID)
 	channel, err := a.slackClient.getChannel(channelID)
 	if err != nil {
 		return merr.Wrap(err, ctx)
 	}
-	ctx = mctx.Annotate(ctx, "userID", userID, "channel", channel.Name)
+	isIM := channel.IsIM
+	ctx = mctx.Annotate(ctx, "userID", userID, "channel", channel.Name, "isIM", isIM)
 
 	user, err := a.slackClient.getUser(userID)
 	if err != nil {
@@ -64,7 +75,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 
 	msg = strings.TrimSpace(msg)
 	prefix := "<@" + a.slackClient.botUserID + ">"
-	if !strings.HasPrefix(msg, prefix) && !channel.IsIM {
+	if !strings.HasPrefix(msg, prefix) && !isIM {
 		return nil
 	}
 	msg = strings.TrimPrefix(msg, prefix)
@@ -80,7 +91,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	}
 
 	if len(fields) < 1 {
-		sendMsg(channelID, a.helpMsg())
+		sendMsg(channelID, a.helpMsg(isIM))
 		return nil
 	}
 
@@ -88,6 +99,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	switch strings.ToLower(fields[0]) {
 	case "ref":
 		sendMsg(channelID, "Current git ref is `%s`", gitRef)
+
 	case "balance":
 		ctx = mctx.Annotate(ctx, "command", "balance")
 		mlog.From(a.cmp).Info("getting user balance", ctx)
@@ -108,7 +120,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 
 	case "give":
 		if len(fields) != 3 {
-			sendMsg(channelID, a.helpMsg())
+			sendMsg(channelID, a.helpMsg(isIM))
 			break
 		}
 		ctx = mctx.Annotate(ctx, "amount", fields[1])
@@ -145,22 +157,25 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 
-		_, _, imChannelID, err := a.slackClient.Client.OpenIMChannel(dstUser.ID)
+		imChannelID, err := a.slackClient.getIMChannel(dstUser.ID)
 		if err != nil {
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d! You can reply to this message with `help` if you don't know what that means :)", userID, amount, dstBalance)
+		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d", userID, amount, dstBalance)
 
-	case "send":
+	case "withdraw":
 		if l := len(fields); l < 3 || l > 4 {
-			sendMsg(channelID, a.helpMsg())
+			sendMsg(channelID, a.helpMsg(isIM))
 			break
 		}
 
 		amount, err := strconv.Atoi(fields[1])
 		if err != nil {
 			outErr = err
+			break
+		} else if amount <= 0 {
+			outErr = merr.New("amount must be greater than 0")
 			break
 		}
 		amountStr := strconv.Itoa(amount)
@@ -204,15 +219,14 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "txID", txID)
 		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
 
-		sendMsg(channelID, "you sent `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
+		sendMsg(channelID, "you withdrew `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
 
 	default:
-		sendMsg(channelID, a.helpMsg())
-		return nil
+		sendMsg(channelID, a.helpMsg(isIM))
 	}
 
 	if outErr != nil {
-		sendMsg(channelID, "error: %s", outErr)
+		sendMsg(channelID, "what a bummer: %s", outErr)
 		return merr.Wrap(outErr, ctx)
 	}
 
@@ -379,7 +393,7 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 		return nil
 	}
 
-	msgStr := fmt.Sprintf("Your transaction of %d CRYPTICBUCK(s) was successful!\n%s", e.Amount, txLink)
+	msgStr := fmt.Sprintf("your transaction of %d CRYPTICBUCK(s) was successful!\n%s", e.Amount, txLink)
 	outMsg := a.slackClient.RTM.NewOutgoingMessage(msgStr, imChannel)
 	a.slackClient.RTM.SendMessage(outMsg)
 
