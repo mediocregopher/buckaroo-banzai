@@ -56,7 +56,7 @@ func cmdDump(cmp *mcmp.Component) {
 		mcfg.ParamUsage("Addr to dump all information about (mutually exclusive with -seed)"))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		if (*seed == "" && *addr == "") || (*seed != "" && *addr != "") {
-			return merr.New("Exactly one of -seed and -addr should be given", cmp.Context(), ctx)
+			return merr.New("Exactly one of --seed and --addr should be given", cmp.Context(), ctx)
 		}
 
 		var accountReq horizonclient.AccountRequest
@@ -78,6 +78,22 @@ func cmdDump(cmp *mcmp.Component) {
 		}
 
 		jsonDump(detail)
+		return nil
+	})
+}
+
+func cmdFund(cmp *mcmp.Component) {
+	client := stellar.InstClient(cmp, false)
+	addr := mcfg.String(cmp, "addr",
+		mcfg.ParamUsage("Addr to fund"))
+	mrun.InitHook(cmp, func(ctx context.Context) error {
+		ctx = mctx.Annotate(ctx, "addr", *addr)
+		mlog.From(cmp).Info("funding account", ctx)
+		res, err := client.Fund(*addr)
+		if err != nil {
+			return merr.Wrap(stellar.FormatErr(err), cmp.Context(), ctx)
+		}
+		jsonDump(res)
 		return nil
 	})
 }
@@ -139,7 +155,7 @@ func cmdTrust(cmp *mcmp.Component) {
 			return merr.Wrap(err, cmp.Context(), ctx)
 		}
 
-		txRes, err := client.SubmitTransactionXDR(txXDR)
+		txRes, err := client.SubmitTransactionXDR(ctx, txXDR)
 		jsonDump(txRes)
 		if err != nil {
 			return merr.Wrap(err, cmp.Context(),
@@ -193,6 +209,7 @@ func main() {
 	cmp := m.RootComponent()
 	mcfg.CLISubCommand(cmp, "gen", "Generate a new stellar seed and address", cmdGen)
 	mcfg.CLISubCommand(cmp, "dump", "Dump all information about an account", cmdDump)
+	mcfg.CLISubCommand(cmp, "fund", "Funds an account with some funds (only works on test net)", cmdFund)
 	mcfg.CLISubCommand(cmp, "resolve", "Resolve a name via the federation protocol", cmdResolve)
 	mcfg.CLISubCommand(cmp, "trust", "Add a trust line", cmdTrust)
 	mcfg.CLISubCommand(cmp, "send", "Send an asset to another account", cmdSend)

@@ -4,6 +4,7 @@ package stellar
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
@@ -20,6 +21,20 @@ import (
 	"github.com/stellar/go/strkey"
 	"github.com/stellar/go/txnbuild"
 )
+
+// FormatErr takes in an error returned by the stellar client, unpacks its
+// internal fields, and returns an error which is formatted to be more useful.
+//
+// If the error was not one returned by the stellar client it is returned as-is.
+func FormatErr(err error) error {
+	herr, ok := err.(*horizonclient.Error)
+	if !ok {
+		return err
+	}
+
+	b, _ := json.Marshal(herr.Problem)
+	return fmt.Errorf("horizon ERR: %q - %s", herr.Problem.Title, b)
+}
 
 // Client wraps a horizon client for stellar.
 type Client struct {
@@ -110,11 +125,7 @@ func (c *Client) SubmitTransactionXDR(ctx context.Context, txXDR string) (Transa
 		return txRes, err
 	}
 
-	if herr, ok := err.(*horizonclient.Error); ok {
-		b, _ := json.Marshal(herr.Problem)
-		ctx = mctx.Annotate(ctx, "problem", string(b))
-	}
-	return txRes, merr.Wrap(err, c.cmp.Context(), ctx)
+	return txRes, merr.Wrap(FormatErr(err), c.cmp.Context(), ctx)
 }
 
 // SendOpts describe the various options which can be sent into the Send method.

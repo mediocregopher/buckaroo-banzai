@@ -9,7 +9,6 @@ require (
 	github.com/gavv/monotime v0.0.0-20190418164738-30dba4353424 // indirect
 	github.com/go-errors/errors v1.0.1 // indirect
 	github.com/gorilla/websocket v1.4.0 // indirect
-	github.com/imkira/go-interpol v1.1.0 // indirect
 	github.com/jarcoal/httpmock v1.0.4 // indirect
 	github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 	github.com/lusis/go-slackbot v0.0.0-20180109053408-401027ccfef5 // indirect
@@ -27,7 +26,7 @@ require (
 	github.com/segmentio/go-loggly v0.5.0 // indirect
 	github.com/sirupsen/logrus v1.4.1 // indirect
 	github.com/smartystreets/goconvey v0.0.0-20190330032615-68dc04aab96a // indirect
-	github.com/stellar/go v0.0.0-20190430222051-cc129a7f0599
+	github.com/stellar/go v0.0.0-20190731171119-52e6e2fe3e0e
 	github.com/stellar/go-xdr v0.0.0-20180917104419-0bc96f33a18e // indirect
 	github.com/valyala/fasthttp v1.2.0 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f // indirect

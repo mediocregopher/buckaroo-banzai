@@ -122,6 +122,7 @@ func (s *stellarServer) receivePayments(ctx context.Context, lastCursor string) 
 	go func() {
 		defer close(ch)
 		for {
+			ctx = mctx.Annotate(ctx, "cursor", lastCursor)
 			req := horizonclient.OperationRequest{
 				ForAccount: s.kp.Address(),
 				Cursor:     lastCursor,
