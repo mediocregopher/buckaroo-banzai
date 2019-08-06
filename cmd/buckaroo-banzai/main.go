@@ -58,7 +58,7 @@ func (a *app) helpMsg(isIM bool) string {
 @%s give <amount> @<user>
 
 // withdraw CRYPTICBUCKs to <stellar address>
-@%s withdraw <amount> <stellar address> [<memo>]
+@%s withdraw <amount> <stellar/federated address> [<memo>]
 `, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
 	fmt.Fprintf(strb, "```\n")
 
