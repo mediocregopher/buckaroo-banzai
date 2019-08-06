@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,14 +43,36 @@ func (a *app) helpMsg(isIM bool) string {
 	if !isIM {
 		suffix = "s"
 	}
-	return strings.TrimSpace(fmt.Sprintf("sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole purveyor of the CRYPTICBUCK cryptocurrency. you earn one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as Stellar tokens!\n\n*Commands*:\n```"+`
-@%s balance                                      // I will respond with your balance
-@%s give <amount> <user>                         // Give CRYPTICBUCKs to <user> (what a chump)
-@%s withdraw <amount> <stellar address> [<memo>] // Withdraw CRYPTICBUCKs to <stellar address>
-`+"```\nNOTE that your stellar account must have a trustline established to `%s` for the token `CRYPTICBUCK` to use the withdraw command",
-		suffix, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.stellar.kp.Address(),
-	))
+
+	strb := new(strings.Builder)
+	fmt.Fprintf(strb, "sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK cryptocurrency bank, housed right here in the cryptic slack group.\n", suffix)
+	fmt.Fprintf(strb, "-----\n*CRYPTICBUCKs*\n")
+	fmt.Fprintf(strb, "your slack bank account earns one CRYPTICBUCK whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as stellar tokens into your own wallet.\n")
+
+	fmt.Fprintf(strb, "-----\n*Commands*\n```")
+	fmt.Fprintf(strb, `
+// I will respond with your bank balance
+@%s balance
+
+// transfer your CRYPTICBUCKs to another user's slack bank
+@%s give <amount> @<user>
+
+// withdraw CRYPTICBUCKs to <stellar address>
+@%s withdraw <amount> <stellar address> [<memo>]
+`, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
+	fmt.Fprintf(strb, "```\n")
+
+	fmt.Fprintf(strb, "-----\n*Withdrawing*\n")
+	fmt.Fprintf(strb, "to withdraw CRYPTICBUCKs into your own stellar wallet you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
+
+	fmt.Fprintf(strb, "-----\n*Depositing*\n")
+	fmt.Fprintf(strb, "to deposit CRYPTICBUCKs from your stellar wallet back into a slack bank account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
+
+	return strb.String()
 }
+
+// wow, regexes are fucking ugly
+var slackUnFormatRegex = regexp.MustCompile(`([^*]+)\*<[^|]+\|([^>]+)>`)
 
 func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string) error {
 	if userID == a.slackClient.botUserID {
@@ -181,6 +204,8 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "command", "send", "amount", amount)
 
 		addr := fields[2]
+		addr = slackUnFormatRegex.ReplaceAllString(addr, `${1}*${2}`)
+
 		var memo string
 		if len(fields) == 4 {
 			memo = fields[3]
@@ -225,8 +250,9 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	}
 
 	if outErr != nil {
+		outErr = merr.Wrap(outErr, ctx)
 		sendMsg(channelID, "what a bummer: %s", outErr)
-		return merr.Wrap(outErr, ctx)
+		return outErr
 	}
 
 	return nil
