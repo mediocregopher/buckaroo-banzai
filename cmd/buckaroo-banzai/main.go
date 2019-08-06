@@ -357,6 +357,20 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 	if _, err := a.bank.Incr(user.ID, int(amount)); err != nil {
 		return merr.Wrap(err, a.cmp.Context(), ctx)
 	}
+
+	imChannel, err := a.slackClient.getIMChannel(user.ID)
+	if err != nil {
+		return merr.Wrap(err, a.cmp.Context(), ctx)
+	}
+
+	msgStr := fmt.Sprintf("%d CRYPTICBUCK(s) were deposited to your account :moneybag:\n", int(amount))
+	if tx.Memo != "" {
+		msgStr += fmt.Sprintf("memo: %q\n", tx.Memo)
+	}
+	msgStr += fmt.Sprintf("sending address: `%s`", tx.Account)
+	outMsg := a.slackClient.RTM.NewOutgoingMessage(msgStr, imChannel)
+	a.slackClient.RTM.SendMessage(outMsg)
+
 	return nil
 }
 
