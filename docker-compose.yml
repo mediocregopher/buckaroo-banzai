@@ -13,6 +13,7 @@ services:
       - SLACK_TOKEN
       - STELLAR_DOMAIN
       - STELLAR_SEED
+      - STELLAR_LIVE_NET
       - STELLAR_HTTP_NET_LISTEN_ADDR=:8000
       - BANK_REDIS_ADDR=redis:6379
       - STELLAR_REDIS_ADDR=redis:6379

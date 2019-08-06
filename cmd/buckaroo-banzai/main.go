@@ -42,11 +42,11 @@ func (a *app) helpMsg(isIM bool) string {
 	if !isIM {
 		suffix = "s"
 	}
-	return strings.TrimSpace(fmt.Sprintf("sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole purveyor of CRYPTICBUCKs. you gain one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as Stellar tokens!\n\n*Commands*:\n```"+`
+	return strings.TrimSpace(fmt.Sprintf("sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole purveyor of the CRYPTICBUCK cryptocurrency. you earn one CRYPTICBUCK whenever someone adds a reaction to one of your messages, and by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as Stellar tokens!\n\n*Commands*:\n```"+`
 @%s balance                                      // I will respond with your balance
 @%s give <amount> <user>                         // Give CRYPTICBUCKs to <user> (what a chump)
 @%s withdraw <amount> <stellar address> [<memo>] // Withdraw CRYPTICBUCKs to <stellar address>
-`+"```\nNOTE that your stellar account must have a trustline established to `%s` for the token CRYPTICBUCKs to use the withdraw command",
+`+"```\nNOTE that your stellar account must have a trustline established to `%s` for the token `CRYPTICBUCK` to use the withdraw command",
 		suffix, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.stellar.kp.Address(),
 	))
 }
