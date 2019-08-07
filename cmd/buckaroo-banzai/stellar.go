@@ -142,7 +142,8 @@ func (s *stellarServer) receivePayments(ctx context.Context, fn func(context.Con
 			break
 		}
 	}
-	mlog.From(s.cmp).Info("fetched last cursor from redis", ctx)
+	mlog.From(s.cmp).Info("fetched last cursor from redis",
+		mctx.Annotate(ctx, "lastCursor", lastCursor))
 
 	for {
 		req := horizonclient.OperationRequest{
