@@ -186,7 +186,9 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, "your friend <@%s> gave you %d :crypticbuck:, giving you a total of %d", userID, amount, dstBalance)
+		// this is hacky, cause sendMsg automatically prefixes everything with
+		// the sender's name, which happens to work here with the sentence.
+		sendMsg(imChannelID, "gave you %d :crypticbuck:, giving you a total of %d", amount, dstBalance)
 
 	case "withdraw":
 		if l := len(fields); l < 3 || l > 4 {
