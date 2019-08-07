@@ -298,7 +298,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 			return
 		}
 		data, ok := e.Data.(*slack.MessageEvent)
-		if !ok || data.User == a.slackClient.botUserID {
+		if !ok || data.User == a.slackClient.botUserID || data.Text == "" {
 			return
 		} else if err := a.processSlackMsg(ctx, data.Channel, data.User, data.Text); err != nil {
 			ctx = mctx.Annotate(ctx, "text", data.Text)
