@@ -269,7 +269,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 	switch e.Type {
 	case "reaction_added":
 		data, ok := e.Data.(*slack.ReactionAddedEvent)
-		if !ok || data.User == data.ItemUser {
+		if !ok || data.User == data.ItemUser || data.ItemUser == "" {
 			return
 		}
 		ctx = mctx.Annotate(ctx, "user", data.ItemUser)
@@ -279,7 +279,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 		}
 	case "reaction_removed":
 		data, ok := e.Data.(*slack.ReactionRemovedEvent)
-		if !ok || data.User == data.ItemUser {
+		if !ok || data.User == data.ItemUser || data.ItemUser == "" {
 			return
 		}
 		ctx = mctx.Annotate(ctx, "user", data.ItemUser)
