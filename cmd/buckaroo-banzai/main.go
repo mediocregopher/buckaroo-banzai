@@ -38,19 +38,20 @@ type app struct {
 	ghost bool
 }
 
-func (a *app) helpMsg(isIM bool) string {
-	var suffix string
-	if !isIM {
-		suffix = "s"
-	}
+const helpMsg = "you appear to be lost, try DM'ing me with the message `help` and I'll try to hook you up."
+
+func (a *app) fullHelpMsg() string {
 
 	strb := new(strings.Builder)
-	fmt.Fprintf(strb, "sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK :crypticbuck: cryptocurrency bank, housed right here in the cryptic slack group.\n", suffix)
+	fmt.Fprintf(strb, "sup nerd! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK :crypticbuck: cryptocurrency bank, housed right here in the cryptic slack group.\n")
 	fmt.Fprintf(strb, "-----\n*CRYPTICBUCKs*\n")
 	fmt.Fprintf(strb, "your slack account earns one CRYPTICBUCK :crypticbuck: whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n")
 
 	fmt.Fprintf(strb, "-----\n*Commands*\n```")
 	fmt.Fprintf(strb, `
+// prints this message
+@%s help
+
 // I will respond with your bank balance
 @%s balance
 
@@ -59,7 +60,7 @@ func (a *app) helpMsg(isIM bool) string {
 
 // withdraw CRYPTICBUCKs to <stellar/federated address>
 @%s withdraw <amount> <stellar/federated address> [<memo>]
-`, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
+`, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
 	fmt.Fprintf(strb, "```\n")
 
 	fmt.Fprintf(strb, "-----\n*Withdrawing*\n")
@@ -103,9 +104,9 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	msg = strings.TrimPrefix(msg, prefix)
 	fields := strings.Fields(msg)
 
-	sendMsg := func(channelID string, prefixName bool, str string, args ...interface{}) {
+	sendMsg := func(channelID string, str string, args ...interface{}) {
 		str = fmt.Sprintf(str, args...)
-		if !channel.IsIM && prefixName {
+		if !channel.IsIM {
 			str = fmt.Sprintf("<@%s> %s", userID, str)
 		}
 		outMsg := a.slackClient.RTM.NewOutgoingMessage(str, channelID)
@@ -113,14 +114,17 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	}
 
 	if len(fields) < 1 {
-		sendMsg(channelID, false, a.helpMsg(isIM))
+		sendMsg(channelID, helpMsg)
 		return nil
 	}
 
 	var outErr error
 	switch strings.ToLower(fields[0]) {
 	case "ref":
-		sendMsg(channelID, true, "Current git ref is `%s`", gitRef)
+		sendMsg(channelID, "Current git ref is `%s`", gitRef)
+
+	case "help":
+		sendMsg(channelID, a.fullHelpMsg())
 
 	case "balance":
 		ctx = mctx.Annotate(ctx, "command", "balance")
@@ -131,16 +135,16 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 		if balance == 0 {
-			sendMsg(channelID, true, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
+			sendMsg(channelID, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
 		} else if balance < 0 {
-			sendMsg(channelID, true, "you have %d :crypticbuck:... that's not even possible :face_with_monocle:", balance)
+			sendMsg(channelID, "you have %d :crypticbuck:... that's not even possible :face_with_monocle:", balance)
 		} else {
-			sendMsg(channelID, true, "you have %d :crypticbuck: !", balance)
+			sendMsg(channelID, "you have %d :crypticbuck: !", balance)
 		}
 
 	case "give":
 		if len(fields) != 3 {
-			sendMsg(channelID, false, a.helpMsg(isIM))
+			sendMsg(channelID, helpMsg)
 			break
 		}
 		ctx = mctx.Annotate(ctx, "amount", fields[1])
@@ -159,7 +163,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "dstUser", dstUser.Name, "dstUserID", dstUser.ID)
 
 		if dstUser.ID == userID {
-			sendMsg(channelID, true, "quit playing with yourself, kid")
+			sendMsg(channelID, "quit playing with yourself, kid")
 			break
 		}
 
@@ -170,7 +174,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 
-		sendMsg(channelID, true, "you gave <@%s> %d :crypticbuck: :money_with_wings:", dstUser.ID, amount)
+		sendMsg(channelID, "you gave <@%s> %d :crypticbuck: :money_with_wings:", dstUser.ID, amount)
 
 		// don't dm a bot, it errors out
 		if dstUser.IsBot {
@@ -182,11 +186,11 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, true, "your friend <@%s> gave you %d :crypticbuck:, giving you a total of %d", userID, amount, dstBalance)
+		sendMsg(imChannelID, "your friend <@%s> gave you %d :crypticbuck:, giving you a total of %d", userID, amount, dstBalance)
 
 	case "withdraw":
 		if l := len(fields); l < 3 || l > 4 {
-			sendMsg(channelID, false, a.helpMsg(isIM))
+			sendMsg(channelID, helpMsg)
 			break
 		}
 
@@ -241,15 +245,15 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "txID", txID)
 		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
 
-		sendMsg(channelID, true, "you withdrew `%s` %d :crypticbuck: :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
+		sendMsg(channelID, "you withdrew `%s` %d :crypticbuck: :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
 
 	default:
-		sendMsg(channelID, false, a.helpMsg(isIM))
+		sendMsg(channelID, helpMsg)
 	}
 
 	if outErr != nil {
 		outErr = merr.Wrap(outErr, ctx)
-		sendMsg(channelID, true, "what a bummer: %s", outErr)
+		sendMsg(channelID, "what a bummer: %s", outErr)
 		return outErr
 	}
 
