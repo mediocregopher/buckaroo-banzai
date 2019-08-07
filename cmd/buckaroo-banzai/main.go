@@ -45,9 +45,9 @@ func (a *app) helpMsg(isIM bool) string {
 	}
 
 	strb := new(strings.Builder)
-	fmt.Fprintf(strb, "sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK cryptocurrency bank, housed right here in the cryptic slack group.\n", suffix)
+	fmt.Fprintf(strb, "sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK :crypticbuck: cryptocurrency bank, housed right here in the cryptic slack group.\n", suffix)
 	fmt.Fprintf(strb, "-----\n*CRYPTICBUCKs*\n")
-	fmt.Fprintf(strb, "your slack account earns one CRYPTICBUCK whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n")
+	fmt.Fprintf(strb, "your slack account earns one CRYPTICBUCK :crypticbuck: whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n")
 
 	fmt.Fprintf(strb, "-----\n*Commands*\n```")
 	fmt.Fprintf(strb, `
@@ -63,10 +63,10 @@ func (a *app) helpMsg(isIM bool) string {
 	fmt.Fprintf(strb, "```\n")
 
 	fmt.Fprintf(strb, "-----\n*Withdrawing*\n")
-	fmt.Fprintf(strb, "to withdraw CRYPTICBUCKs into your own stellar wallet (e.g. keybase) you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
+	fmt.Fprintf(strb, "to withdraw :crypticbuck: into your own stellar wallet (e.g. keybase) you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
 
 	fmt.Fprintf(strb, "-----\n*Depositing*\n")
-	fmt.Fprintf(strb, "to deposit CRYPTICBUCKs from your stellar wallet back into a slack account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
+	fmt.Fprintf(strb, "to deposit :crypticbuck: from your stellar wallet back into a slack account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
 
 	return strb.String()
 }
@@ -132,12 +132,10 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 		if balance == 0 {
 			sendMsg(channelID, true, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
-		} else if balance == 1 {
-			sendMsg(channelID, true, "you have 1 CRYPTICBUCK!")
 		} else if balance < 0 {
-			sendMsg(channelID, true, "you have %d CRYPTICBUCKs! that's not even possible :face_with_monocle:", balance)
+			sendMsg(channelID, true, "you have %d :crypticbuck:... that's not even possible :face_with_monocle:", balance)
 		} else {
-			sendMsg(channelID, true, "you have %d CRYPTICBUCKs!", balance)
+			sendMsg(channelID, true, "you have %d :crypticbuck: !", balance)
 		}
 
 	case "give":
@@ -172,7 +170,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 
-		sendMsg(channelID, true, "you gave <@%s> %d CRYPTICBUCK(s) :money_with_wings:", dstUser.ID, amount)
+		sendMsg(channelID, true, "you gave <@%s> %d :crypticbuck: :money_with_wings:", dstUser.ID, amount)
 
 		// don't dm a bot, it errors out
 		if dstUser.IsBot {
@@ -184,7 +182,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, true, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d", userID, amount, dstBalance)
+		sendMsg(imChannelID, true, "your friend <@%s> gave you %d :crypticbuck:, giving you a total of %d", userID, amount, dstBalance)
 
 	case "withdraw":
 		if l := len(fields); l < 3 || l > 4 {
@@ -243,7 +241,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "txID", txID)
 		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
 
-		sendMsg(channelID, true, "you withdrew `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
+		sendMsg(channelID, true, "you withdrew `%s` %d :crypticbuck: :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
 
 	default:
 		sendMsg(channelID, false, a.helpMsg(isIM))
@@ -363,7 +361,7 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 		return merr.Wrap(err, a.cmp.Context(), ctx)
 	}
 
-	msgStr := fmt.Sprintf("%d CRYPTICBUCK(s) were deposited to your account :moneybag:\n", int(amount))
+	msgStr := fmt.Sprintf("%d :crypticbuck: were deposited to your account :moneybag:\n", int(amount))
 	if tx.Memo != "" {
 		msgStr += fmt.Sprintf("memo: %q\n", tx.Memo)
 	}
@@ -408,7 +406,7 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 		return nil
 	}
 
-	msgStr := fmt.Sprintf("your transaction of %d CRYPTICBUCK(s) was successful!\n%s", e.Amount, txLink)
+	msgStr := fmt.Sprintf("your transaction of %d :crypticbuck: was successful!\n%s", e.Amount, txLink)
 	outMsg := a.slackClient.RTM.NewOutgoingMessage(msgStr, imChannel)
 	a.slackClient.RTM.SendMessage(outMsg)
 
