@@ -103,9 +103,9 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	msg = strings.TrimPrefix(msg, prefix)
 	fields := strings.Fields(msg)
 
-	sendMsg := func(channelID, str string, args ...interface{}) {
+	sendMsg := func(channelID string, prefixName bool, str string, args ...interface{}) {
 		str = fmt.Sprintf(str, args...)
-		if !channel.IsIM {
+		if !channel.IsIM && prefixName {
 			str = fmt.Sprintf("<@%s> %s", userID, str)
 		}
 		outMsg := a.slackClient.RTM.NewOutgoingMessage(str, channelID)
@@ -113,14 +113,14 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	}
 
 	if len(fields) < 1 {
-		sendMsg(channelID, a.helpMsg(isIM))
+		sendMsg(channelID, false, a.helpMsg(isIM))
 		return nil
 	}
 
 	var outErr error
 	switch strings.ToLower(fields[0]) {
 	case "ref":
-		sendMsg(channelID, "Current git ref is `%s`", gitRef)
+		sendMsg(channelID, true, "Current git ref is `%s`", gitRef)
 
 	case "balance":
 		ctx = mctx.Annotate(ctx, "command", "balance")
@@ -131,18 +131,18 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 		if balance == 0 {
-			sendMsg(channelID, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
+			sendMsg(channelID, true, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
 		} else if balance == 1 {
-			sendMsg(channelID, "you have 1 CRYPTICBUCK!")
+			sendMsg(channelID, true, "you have 1 CRYPTICBUCK!")
 		} else if balance < 0 {
-			sendMsg(channelID, "you have %d CRYPTICBUCKs! that's not even possible :face_with_monocle:", balance)
+			sendMsg(channelID, true, "you have %d CRYPTICBUCKs! that's not even possible :face_with_monocle:", balance)
 		} else {
-			sendMsg(channelID, "you have %d CRYPTICBUCKs!", balance)
+			sendMsg(channelID, true, "you have %d CRYPTICBUCKs!", balance)
 		}
 
 	case "give":
 		if len(fields) != 3 {
-			sendMsg(channelID, a.helpMsg(isIM))
+			sendMsg(channelID, false, a.helpMsg(isIM))
 			break
 		}
 		ctx = mctx.Annotate(ctx, "amount", fields[1])
@@ -161,7 +161,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "dstUser", dstUser.Name, "dstUserID", dstUser.ID)
 
 		if dstUser.ID == userID {
-			sendMsg(channelID, "quit playing with yourself, kid")
+			sendMsg(channelID, true, "quit playing with yourself, kid")
 			break
 		}
 
@@ -172,7 +172,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 
-		sendMsg(channelID, "you gave <@%s> %d CRYPTICBUCK(s) :money_with_wings:", dstUser.ID, amount)
+		sendMsg(channelID, true, "you gave <@%s> %d CRYPTICBUCK(s) :money_with_wings:", dstUser.ID, amount)
 
 		// don't dm a bot, it errors out
 		if dstUser.IsBot {
@@ -184,11 +184,11 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		}
-		sendMsg(imChannelID, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d", userID, amount, dstBalance)
+		sendMsg(imChannelID, true, "your friend <@%s> gave you %d CRYPTICBUCKs, giving you a total of %d", userID, amount, dstBalance)
 
 	case "withdraw":
 		if l := len(fields); l < 3 || l > 4 {
-			sendMsg(channelID, a.helpMsg(isIM))
+			sendMsg(channelID, false, a.helpMsg(isIM))
 			break
 		}
 
@@ -243,15 +243,15 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "txID", txID)
 		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
 
-		sendMsg(channelID, "you withdrew `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
+		sendMsg(channelID, true, "you withdrew `%s` %d CRYPTICBUCK(s) :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
 
 	default:
-		sendMsg(channelID, a.helpMsg(isIM))
+		sendMsg(channelID, false, a.helpMsg(isIM))
 	}
 
 	if outErr != nil {
 		outErr = merr.Wrap(outErr, ctx)
-		sendMsg(channelID, "what a bummer: %s", outErr)
+		sendMsg(channelID, true, "what a bummer: %s", outErr)
 		return outErr
 	}
 
