@@ -47,7 +47,7 @@ func (a *app) helpMsg(isIM bool) string {
 	strb := new(strings.Builder)
 	fmt.Fprintf(strb, "sup nerd%s! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK cryptocurrency bank, housed right here in the cryptic slack group.\n", suffix)
 	fmt.Fprintf(strb, "-----\n*CRYPTICBUCKs*\n")
-	fmt.Fprintf(strb, "your slack bank account earns one CRYPTICBUCK whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them as stellar tokens into your own wallet.\n")
+	fmt.Fprintf(strb, "your slack account earns one CRYPTICBUCK whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n")
 
 	fmt.Fprintf(strb, "-----\n*Commands*\n```")
 	fmt.Fprintf(strb, `
@@ -57,16 +57,16 @@ func (a *app) helpMsg(isIM bool) string {
 // transfer your CRYPTICBUCKs to another user's slack bank
 @%s give <amount> @<user>
 
-// withdraw CRYPTICBUCKs to <stellar address>
+// withdraw CRYPTICBUCKs to <stellar/federated address>
 @%s withdraw <amount> <stellar/federated address> [<memo>]
 `, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
 	fmt.Fprintf(strb, "```\n")
 
 	fmt.Fprintf(strb, "-----\n*Withdrawing*\n")
-	fmt.Fprintf(strb, "to withdraw CRYPTICBUCKs into your own stellar wallet you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
+	fmt.Fprintf(strb, "to withdraw CRYPTICBUCKs into your own stellar wallet (e.g. keybase) you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
 
 	fmt.Fprintf(strb, "-----\n*Depositing*\n")
-	fmt.Fprintf(strb, "to deposit CRYPTICBUCKs from your stellar wallet back into a slack bank account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
+	fmt.Fprintf(strb, "to deposit CRYPTICBUCKs from your stellar wallet back into a slack account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
 
 	return strb.String()
 }
