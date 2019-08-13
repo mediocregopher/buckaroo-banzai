@@ -143,7 +143,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 
 	case "give":
-		if len(fields) != 3 {
+		if len(fields) < 3 {
 			sendMsg(channelID, helpMsg)
 			break
 		}
@@ -191,7 +191,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		sendMsg(imChannelID, "gave you %d :crypticbuck:, giving you a total of %d", amount, dstBalance)
 
 	case "withdraw":
-		if l := len(fields); l < 3 || l > 4 {
+		if l := len(fields); l < 3 {
 			sendMsg(channelID, helpMsg)
 			break
 		}
