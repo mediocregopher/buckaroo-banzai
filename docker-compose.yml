@@ -11,8 +11,11 @@ services:
     image: ${DOCKER_IMAGE}
     environment:
       - SLACK_TOKEN
+      - CURRENCY_NAME
+      - CURRENCY_EMOJI
       - STELLAR_DOMAIN
       - STELLAR_SEED
+      - STELLAR_TOKEN_NAME
       - STELLAR_LIVE_NET
       - STELLAR_HTTP_NET_LISTEN_ADDR=:8000
       - BANK_REDIS_ADDR=redis:6379

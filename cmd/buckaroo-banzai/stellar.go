@@ -27,12 +27,12 @@ import (
 
 const federationPath = "/api/federation"
 
-// TODO make CRYPTICBUCK configurable
 type stellarServer struct {
-	cmp    *mcmp.Component
-	kp     *keypair.Full
-	domain string
-	client *stellar.Client
+	cmp       *mcmp.Component
+	kp        *keypair.Full
+	tokenName string
+	domain    string
+	client    *stellar.Client
 
 	// stellar needs its own redis instance in order to store the seen
 	// lastCursor
@@ -54,13 +54,17 @@ func instStellarServer(parent *mcmp.Component) *stellarServer {
 	s.ServeMux.HandleFunc("/.well-known/stellar.toml", s.tomlHandler)
 	s.ServeMux.HandleFunc(federationPath, s.federationHandler)
 
+	tokenName := mcfg.String(cmp, "token-name",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Name of the token to be issued"))
 	domain := mcfg.String(s.cmp, "domain",
 		mcfg.ParamRequired(),
 		mcfg.ParamUsage("Domain the server will be served from"))
 
 	mrun.InitHook(s.cmp, func(ctx context.Context) error {
+		s.tokenName = *tokenName
 		s.domain = *domain
-		s.cmp.Annotate("domain", s.domain)
+		s.cmp.Annotate("tokenName", s.tokenName, "domain", s.domain)
 		return nil
 	})
 
@@ -73,20 +77,21 @@ ACCOUNTS=["{{.Address}}"]
 FEDERATION_SERVER="https://{{.FederationAddr}}"
 
 [[CURRENCIES]]
-CODE="CRYPTICBUCK"
+CODE="{{.TokenName}}"
 ISSUER="{{.Address}}"
 DISPLAY_DECIMALS=0
 IS_UNLIMITED=true
-NAME="CRYPTICBUCK"
-DESC="CRYPTICBUCKs are given to members of the Cryptic group by our resident Token Lord, Buckaroo Bonzai. <script>alert('fix your shit lol');</script>"
-CONDITIONS="CRYPTICBUCKs are priceless and anybody trading them is a fool."
+NAME="{{.TokenName}}"
+DESC="{{.TokenName}}s are given to members of the Cryptic group by our resident Token Lord, Buckaroo Bonzai. <script>alert('fix your shit lol');</script>"
+CONDITIONS="{{.TokenName}}s are priceless and anybody trading them is a fool."
 `))
 
 func (s *stellarServer) tomlHandler(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Access-Control-Allow-Origin", "*")
 	rw.Header().Set("Content-Type", "text/toml")
 
-	err := stellarTOMLTPL.Execute(rw, struct{ Address, FederationAddr string }{
+	err := stellarTOMLTPL.Execute(rw, struct{ TokenName, Address, FederationAddr string }{
+		TokenName:      s.tokenName,
 		Address:        s.kp.Address(),
 		FederationAddr: s.domain + federationPath,
 	})

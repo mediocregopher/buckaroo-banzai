@@ -30,22 +30,44 @@ var gitRef string
 type app struct {
 	cmp *mcmp.Component
 
-	bank        bank.ExportingBank
-	slackClient *slackClient
-	stellar     *stellarServer
+	bank                        bank.ExportingBank
+	slackClient                 *slackClient
+	stellar                     *stellarServer
+	currencyName, currencyEmoji string
 
 	// if true then buckaroo won't speak or listen to anyone speaking to him.
 	ghost bool
+}
+
+// currencyString returns the currency's name, formatted based on the amount
+// which is being described. -1 can be given if the amount is not known.
+//
+// If emojiOk is given and the app was configured with an emoji for the currency
+// then that will be returned instead.
+func (a *app) currencyString(amount int, emojiOk bool) string {
+	if emojiOk && a.currencyEmoji != "" {
+		return a.currencyEmoji
+	} else if amount == 0 || amount > 1 {
+		return a.currencyName + "s"
+	} else if amount == 1 {
+		return a.currencyName
+	}
+	return a.currencyName + "(s)"
 }
 
 const helpMsg = "you appear to be lost, try DM'ing me with the message `help` and I'll try to hook you up."
 
 func (a *app) fullHelpMsg() string {
 
+	emojiHelp := ""
+	if a.currencyEmoji != "" {
+		emojiHelp = " (" + a.currencyEmoji + ")"
+	}
+
 	strb := new(strings.Builder)
-	fmt.Fprintf(strb, "sup nerd! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the CRYPTICBUCK :crypticbuck: cryptocurrency bank, housed right here in the cryptic slack group.\n")
-	fmt.Fprintf(strb, "-----\n*CRYPTICBUCKs*\n")
-	fmt.Fprintf(strb, "your slack account earns one CRYPTICBUCK :crypticbuck: whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n")
+	fmt.Fprintf(strb, "sup nerd! I'm Buckaroo Bonzai, a very cool guy and the sole owner of the %s%s cryptocurrency bank, housed right here in the cryptic slack group.\n", a.currencyString(1, false), emojiHelp)
+	fmt.Fprintf(strb, "-----\n*%s*\n", a.currencyString(2, false))
+	fmt.Fprintf(strb, "your slack account earns 1 %s whenever someone adds an emoji reaction to one of your messages. by @'ing or DMing me you can give them to other people in the slack team, or withdraw them into a stellar wallet.\n", a.currencyString(1, true))
 
 	fmt.Fprintf(strb, "-----\n*Commands*\n```")
 	fmt.Fprintf(strb, `
@@ -55,19 +77,21 @@ func (a *app) fullHelpMsg() string {
 // I will respond with your bank balance
 @%s balance
 
-// transfer your CRYPTICBUCKs to another user's slack bank
+// transfer your %s to another user's slack bank
 @%s give <amount> @<user>
 
-// withdraw CRYPTICBUCKs to <stellar/federated address>
+// withdraw %s to <stellar/federated address>
 @%s withdraw <amount> <stellar/federated address> [<memo>]
-`, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser, a.slackClient.botUser)
+`, a.slackClient.botUser, a.slackClient.botUser, a.currencyString(2, false),
+		a.slackClient.botUser, a.currencyString(2, false), a.slackClient.botUser,
+	)
 	fmt.Fprintf(strb, "```\n")
 
 	fmt.Fprintf(strb, "-----\n*Withdrawing*\n")
-	fmt.Fprintf(strb, "to withdraw :crypticbuck: into your own stellar wallet (e.g. keybase) you must first add a trustline with the issuer `%s` and the asset `CRYPTICBUCK` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.stellar.kp.Address())
+	fmt.Fprintf(strb, "to withdraw %s into your own stellar wallet (e.g. keybase) you must first add a trustline with the issuer `%s` and the asset `%s` to your wallet. once done, use the `withdraw` command to send yourself those sweet sweet cryptos.\n", a.currencyString(2, true), a.stellar.kp.Address(), a.currencyName)
 
 	fmt.Fprintf(strb, "-----\n*Depositing*\n")
-	fmt.Fprintf(strb, "to deposit :crypticbuck: from your stellar wallet back into a slack account simply send the tokens to the stellar address `<username>*bucks.cryptic.io`. The username _must_ be the same as the slack username (the one used when you @ someone).")
+	fmt.Fprintf(strb, "to deposit %s from your stellar wallet back into a slack account simply send the tokens to the stellar address `<username>*%s`. The username _must_ be the same as the slack username (the one used when you @ someone).", a.currencyString(2, true), a.stellar.domain)
 
 	return strb.String()
 }
@@ -135,11 +159,11 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 		if balance == 0 {
-			sendMsg(channelID, "sorry champ, you don't have any CRYPTICBUCKs :( if you're having trouble getting CRYPTICBUCKs, try being cool!")
+			sendMsg(channelID, "sorry champ, you don't have any %s :( if you're having trouble getting %s, try being cool!", a.currencyString(2, false), a.currencyString(2, false))
 		} else if balance < 0 {
-			sendMsg(channelID, "you have %d :crypticbuck:... that's not even possible :face_with_monocle:", balance)
+			sendMsg(channelID, "you have %d %s... that's not even possible :face_with_monocle:", balance, a.currencyString(balance, true))
 		} else {
-			sendMsg(channelID, "you have %d :crypticbuck: !", balance)
+			sendMsg(channelID, "you have %d %s !", balance, a.currencyString(balance, true))
 		}
 
 	case "give":
@@ -174,7 +198,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			break
 		}
 
-		sendMsg(channelID, "you gave <@%s> %d :crypticbuck: :money_with_wings:", dstUser.ID, amount)
+		sendMsg(channelID, "you gave <@%s> %d %s :money_with_wings:", dstUser.ID, amount, a.currencyString(amount, true))
 
 		// don't dm a bot, it errors out
 		if dstUser.IsBot {
@@ -188,7 +212,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		}
 		// this is hacky, cause sendMsg automatically prefixes everything with
 		// the sender's name, which happens to work here with the sentence.
-		sendMsg(imChannelID, "gave you %d :crypticbuck:, giving you a total of %d", amount, dstBalance)
+		sendMsg(imChannelID, "gave you %d %s, giving you a total of %d", amount, a.currencyString(amount, true), dstBalance)
 
 	case "withdraw":
 		if l := len(fields); l < 3 {
@@ -224,7 +248,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			From:        a.stellar.kp,
 			To:          addr,
 			Memo:        memo,
-			AssetCode:   "CRYPTICBUCK",
+			AssetCode:   a.currencyName,
 			AssetIssuer: a.stellar.kp.Address(),
 			Amount:      amountStr,
 		})
@@ -247,7 +271,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		ctx = mctx.Annotate(ctx, "txID", txID)
 		mlog.From(a.cmp).Info("XDR successfully submitted", ctx)
 
-		sendMsg(channelID, "you withdrew `%s` %d :crypticbuck: :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount)
+		sendMsg(channelID, "you withdrew `%s` %d %s :money_with_wings: :money_with_wings: You'll get a DM when the transaction has been successfully submitted to the network", addr, amount, a.currencyString(amount, true))
 
 	default:
 		sendMsg(channelID, helpMsg)
@@ -328,7 +352,7 @@ func (a *app) processSlackEvents(ctx context.Context) {
 func (a *app) processStellarPayment(ctx context.Context, payment operations.Payment) error {
 	mlog.From(a.cmp).Info("processing incoming stellar transaction", ctx)
 
-	if payment.Code != "CRYPTICBUCK" || payment.Issuer != a.stellar.kp.Address() {
+	if payment.Code != a.currencyName || payment.Issuer != a.stellar.kp.Address() {
 		return merr.New("payment is not in buckaroo's currency", a.cmp.Context(), ctx)
 	}
 
@@ -367,7 +391,7 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 		return merr.Wrap(err, a.cmp.Context(), ctx)
 	}
 
-	msgStr := fmt.Sprintf("%d :crypticbuck: were deposited to your account :moneybag:\n", int(amount))
+	msgStr := fmt.Sprintf("%d %s were deposited to your account :moneybag:\n", int(amount), a.currencyString(int(amount), true))
 	if tx.Memo != "" {
 		msgStr += fmt.Sprintf("memo: %q\n", tx.Memo)
 	}
@@ -412,7 +436,7 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 		return nil
 	}
 
-	msgStr := fmt.Sprintf("your transaction of %d :crypticbuck: was successful!\n%s", e.Amount, txLink)
+	msgStr := fmt.Sprintf("your transaction of %d %s was successful!\n%s", e.Amount, a.currencyString(e.Amount, true), txLink)
 	outMsg := a.slackClient.RTM.NewOutgoingMessage(msgStr, imChannel)
 	a.slackClient.RTM.SendMessage(outMsg)
 
@@ -443,6 +467,11 @@ func main() {
 		slackClient: instSlackClient(cmp),
 	}
 
+	currencyName := mcfg.String(cmp, "currency-name",
+		mcfg.ParamRequired(),
+		mcfg.ParamUsage("Name of the currency which buckaroo will be printing."))
+	currencyEmoji := mcfg.String(cmp, "currency-emoji",
+		mcfg.ParamUsage("Optional emoji string which can be used when writing slack messages."))
 	ghost := mcfg.Bool(cmp, "ghost",
 		mcfg.ParamUsage("if set then buckaroo will ignore all messages directed at him"))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
@@ -450,6 +479,9 @@ func main() {
 		if a.ghost {
 			mlog.From(cmp).Info("ghost mode is enabled, wooOOOoOOOOoooOOOOOOoooo", ctx)
 		}
+		a.currencyName = strings.ToUpper(*currencyName)
+		a.currencyEmoji = *currencyEmoji
+		cmp.Annotate("currencyName", a.currencyName)
 		return nil
 	})
 

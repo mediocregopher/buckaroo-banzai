@@ -247,7 +247,7 @@ func InstKeyPair(cmp *mcmp.Component) *keypair.Full {
 
 	seedStr := mcfg.String(cmp, "seed",
 		mcfg.ParamRequired(),
-		mcfg.ParamUsage("Seed for account which will issue CRYPTICBUCKs"))
+		mcfg.ParamUsage("Seed for account which will issue tokens"))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		pair, err := LoadKeyPair(*seedStr)
 		if err != nil {
