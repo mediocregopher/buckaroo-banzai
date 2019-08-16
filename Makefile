@@ -1,16 +1,15 @@
-IMAGE := docker.mediocre-desktop.zt/buckaroo-banzai
+IMAGE := mediocregopher/buckaroo-banzai
 GITREF := $(shell git rev-parse HEAD)
 
-build: docker-binary
-	docker build -t $(IMAGE):$(GITREF) -t $(IMAGE):latest .
+binary:
+	go build ./cmd/buckaroo-banzai
 
 docker-binary:
-	CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.gitRef=${GITREF}" -a -installsuffix cgo ./cmd/buckaroo-banzai
+	CGO_ENABLED=0 go build -ldflags "-X main.gitRef=${GITREF}" -a -installsuffix cgo ./cmd/buckaroo-banzai
 
-push:
+docker: docker-binary
+	docker build -t $(IMAGE):$(GITREF) -t $(IMAGE):latest .
+
+docker-push:
 	docker push $(IMAGE):$(GITREF)
 	docker push $(IMAGE):latest
-
-restart:
-	docker-compose down
-	docker-compose up -d
