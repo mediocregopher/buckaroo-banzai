@@ -89,11 +89,16 @@ func (b *redisBank) Incr(userID string, by int) (int, error) {
 }
 
 // Keys:[balancesKey] Args:[dstUser, srcUser, amount]
+// a negative amount can be transferred, technically, so check for that case.
 var transferCmd = radix.NewEvalScript(1, `
 	local toTransfer = tonumber(ARGV[3])
-	local srcBalance = tonumber(redis.call("HGET", KEYS[1], ARGV[2]))
+
+	local balances = redis.call("HMGET", KEYS[1], ARGV[1], ARGV[2])
+	local dstBalance = tonumber(balances[1])
+	local srcBalance = tonumber(balances[2])
+	if not dstBalance then dstBalance = 0 end
 	if not srcBalance then srcBalance = 0 end
-	if srcBalance < toTransfer then
+	if srcBalance - toTransfer < 0 or dstBalance + toTransfer < 0 then
 		return redis.error_reply("`+notEnoughFundsStr+`")
 	end
 

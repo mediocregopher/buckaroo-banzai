@@ -84,6 +84,14 @@ func TestPersistentBank(t *T) {
 			assertTransfer(userB, userA, 1, 1, 0),
 			assertBalance(userA, 0),
 			assertBalance(userB, 1),
+
+			assertTransfer(userB, userA, -1, 0, 1),
+			assertBalance(userA, 1),
+			assertBalance(userB, 0),
+
+			assertTransfer(userB, userA, -1, -1, -1),
+			assertBalance(userA, 1),
+			assertBalance(userB, 0),
 		)
 	})
 }

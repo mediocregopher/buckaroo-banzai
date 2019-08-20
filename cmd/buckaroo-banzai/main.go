@@ -176,6 +176,9 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 		if err != nil {
 			outErr = err
 			break
+		} else if amount <= 0 {
+			outErr = merr.New("amount must be greater than 0")
+			break
 		}
 
 		ctx = mctx.Annotate(ctx, "command", "give", "dstUserID", fields[2])
