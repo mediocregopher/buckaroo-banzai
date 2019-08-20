@@ -136,6 +136,7 @@ type SendOpts struct {
 	AssetCode   string
 	AssetIssuer string // required unless AssetCode is "XLM"
 	Amount      string
+	Timeout     time.Duration // time the transaction is valid for, 0 means infinite
 }
 
 func (opts SendOpts) annotate(ctx context.Context) context.Context {
@@ -188,9 +189,8 @@ func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error)
 	}
 
 	timeout := txnbuild.NewInfiniteTimeout()
-	if deadline, ok := ctx.Deadline(); ok {
-		timeoutSeconds := int64(time.Until(deadline).Seconds())
-		if timeoutSeconds > 0 {
+	if opts.Timeout > 0 {
+		if timeoutSeconds := int64(opts.Timeout.Seconds()); timeoutSeconds > 0 {
 			ctx = mctx.Annotate(ctx, "sendTimeout", timeoutSeconds)
 			timeout = txnbuild.NewTimeout(timeoutSeconds)
 		}
