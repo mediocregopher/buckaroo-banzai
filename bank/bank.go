@@ -3,25 +3,32 @@
 package bank
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
 	"github.com/mediocregopher/mediocre-go-lib/mdb/mredis"
-	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/radix/v3"
 )
 
-var notEnoughFundsStr = "you aint got that kind of scratch, kid"
+var (
+	// ErrNotEnoughFunds is returned when a user does not have enough funds in
+	// their account to perform some action.
+	ErrNotEnoughFunds = errors.New("you aint got that kind of scratch, kid")
+)
 
-// IsNotEnoughFunds returns true if the given error is due to an account not
-// having enough funds to perform some action.
-func IsNotEnoughFunds(err error) bool {
+func translateRedisErr(err error) error {
 	if err == nil {
-		return false
+		return nil
 	}
-	return merr.Base(err).Error() == notEnoughFundsStr
+	switch err.Error() {
+	case ErrNotEnoughFunds.Error():
+		return ErrNotEnoughFunds
+	default:
+		return err
+	}
 }
 
 // Bank describes a thread-safe store of user funds.
@@ -66,7 +73,11 @@ func (b *redisBank) balancesKey() string { return b.key("balances") }
 func (b *redisBank) Balance(userID string) (int, error) {
 	var amount int
 	err := b.Do(radix.Cmd(&amount, "HGET", b.balancesKey(), userID))
-	return amount, merr.Wrap(err, b.cmp.Context())
+	err = translateRedisErr(err)
+	if err != nil {
+		return 0, fmt.Errorf("error retriving balance from redis: %w", err)
+	}
+	return amount, nil
 }
 
 // Keys:[balancesKey] Args:[user, amount]
@@ -76,7 +87,7 @@ var incrCmd = radix.NewEvalScript(1, `
 	local balance = tonumber(redis.call("HGET", KEYS[1], ARGV[1]))
 	if not balance then balance = 0 end
 	if balance + toIncr < 0 then
-		return redis.error_reply("`+notEnoughFundsStr+`")
+		return redis.error_reply("`+ErrNotEnoughFunds.Error()+`")
 	end
 
 	return redis.call("HINCRBY", KEYS[1], ARGV[1], toIncr)
@@ -85,7 +96,11 @@ var incrCmd = radix.NewEvalScript(1, `
 func (b *redisBank) Incr(userID string, by int) (int, error) {
 	var newBalance int
 	err := b.Do(incrCmd.Cmd(&newBalance, b.balancesKey(), userID, strconv.Itoa(by)))
-	return newBalance, merr.Wrap(err, b.cmp.Context())
+	err = translateRedisErr(err)
+	if err != nil {
+		return 0, fmt.Errorf("incrementing balance in redis: %w", err)
+	}
+	return newBalance, nil
 }
 
 // Keys:[balancesKey] Args:[dstUser, srcUser, amount]
@@ -99,7 +114,7 @@ var transferCmd = radix.NewEvalScript(1, `
 	if not dstBalance then dstBalance = 0 end
 	if not srcBalance then srcBalance = 0 end
 	if srcBalance - toTransfer < 0 or dstBalance + toTransfer < 0 then
-		return redis.error_reply("`+notEnoughFundsStr+`")
+		return redis.error_reply("`+ErrNotEnoughFunds.Error()+`")
 	end
 
 	local newDstBalance = redis.call("HINCRBY", KEYS[1], ARGV[1], toTransfer)
@@ -112,8 +127,9 @@ func (b *redisBank) Transfer(dstUserID, srcUserID string, amount int) (int, int,
 	err := b.Do(transferCmd.Cmd(
 		&newBalances, b.balancesKey(), dstUserID, srcUserID, strconv.Itoa(amount),
 	))
+	err = translateRedisErr(err)
 	if err != nil {
-		return 0, 0, merr.Wrap(err, b.cmp.Context())
+		return 0, 0, fmt.Errorf("transfering amount in redis: %w", err)
 	}
 	return newBalances[0], newBalances[1], nil
 }

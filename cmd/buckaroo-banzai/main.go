@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -109,14 +110,14 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	ctx = mctx.Annotate(ctx, "channelID", channelID)
 	channel, err := a.slackClient.getChannel(channelID)
 	if err != nil {
-		return merr.Wrap(err, ctx)
+		return fmt.Errorf("couldn't get slack channel %v: %w", channelID, err)
 	}
 	isIM := channel.IsIM
 	ctx = mctx.Annotate(ctx, "userID", userID, "channel", channel.Name, "isIM", isIM)
 
 	user, err := a.slackClient.getUser(userID)
 	if err != nil {
-		return merr.Wrap(err, ctx)
+		return fmt.Errorf("couldn't get slack user %v: %w", userID, err)
 	}
 	ctx = mctx.Annotate(ctx, "user", user.Name)
 
@@ -177,7 +178,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		} else if amount <= 0 {
-			outErr = merr.New("amount must be greater than 0")
+			outErr = errors.New("amount must be greater than 0")
 			break
 		}
 
@@ -228,7 +229,7 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 			outErr = err
 			break
 		} else if amount <= 0 {
-			outErr = merr.New("amount must be greater than 0")
+			outErr = errors.New("amount must be greater than 0")
 			break
 		}
 		amountStr := strconv.Itoa(amount)
@@ -281,7 +282,6 @@ func (a *app) processSlackMsg(ctx context.Context, channelID, userID, msg string
 	}
 
 	if outErr != nil {
-		outErr = merr.Wrap(outErr, ctx)
 		sendMsg(channelID, "what a bummer: %s", outErr)
 		return outErr
 	}
@@ -321,7 +321,7 @@ func (a *app) processSlackEvent(e slack.RTMEvent) {
 		// it's possible for the user to not have enough funds to decrement, for
 		// example if they received a reaction, gave the earned buck to someone
 		// else, then the reaction was removed. I guess this is fine?
-		if _, err := a.bank.Incr(data.ItemUser, -1); err != nil && !bank.IsNotEnoughFunds(err) {
+		if _, err := a.bank.Incr(data.ItemUser, -1); err != nil && !errors.Is(err, bank.ErrNotEnoughFunds) {
 			mlog.From(a.cmp).Error("error decrementing user's balance", ctx, merr.Context(err))
 		}
 	case "message":
@@ -356,28 +356,30 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 	mlog.From(a.cmp).Info("processing incoming stellar transaction", ctx)
 
 	if payment.Code != a.currencyName || payment.Issuer != a.stellar.kp.Address() {
-		return merr.New("payment is not in buckaroo's currency", a.cmp.Context(), ctx)
+		return fmt.Errorf("payment %+v is not in buckaroo's currency", payment)
 	}
 
-	tx, err := a.stellar.client.TransactionDetail(payment.GetTransactionHash())
+	txHash := payment.GetTransactionHash()
+	tx, err := a.stellar.client.TransactionDetail(txHash)
 	if err != nil {
-		return merr.New("failed to retrieve operation's tx", a.cmp.Context(), ctx)
+		return fmt.Errorf("failed to retrieve tx detail for %q: %w",
+			txHash, stellar.HorizonErr(err))
 	}
 
 	ctx = mctx.Annotate(ctx, "memo", tx.Memo)
 	userName := strings.TrimSuffix(tx.Memo, "*"+a.stellar.domain)
 	user, err := a.slackClient.getUserByName(userName)
 	if err != nil {
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("couldn't get slack user %q: %w", userName, err)
 	} else if user == nil { // not sure if this happens, but whatevs
-		return merr.New("incoming stellar transaction destined for invalid user", a.cmp.Context(), ctx)
+		return fmt.Errorf("incoming stellar transaction destined for invalid user %q", tx.Memo)
 	}
 
 	amount, err := strconv.ParseFloat(payment.Amount, 64)
 	if err != nil {
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("could not parse payment amount %q: %w", payment.Amount, err)
 	} else if float64(int(amount)) != amount {
-		return merr.New("amount is not a whole number", a.cmp.Context(), ctx)
+		return fmt.Errorf("payment amount %q is not a whole number", payment.Amount)
 	}
 
 	// TODO is it possible to reject a stellar tx? If so we should do that for
@@ -386,12 +388,13 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 	ctx = mctx.Annotate(ctx, "dstUserID", user.ID, "dstUserName", user.Name, "amount", amount)
 	mlog.From(a.cmp).Info("incrementing user's account", ctx)
 	if _, err := a.bank.Incr(user.ID, int(amount)); err != nil {
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("could not increment account bank user %q by %d: %w",
+			user.ID, int(amount), err)
 	}
 
 	imChannel, err := a.slackClient.getIMChannel(user.ID)
 	if err != nil {
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("could not get slack IM channel for user %q: %w", user.ID, err)
 	}
 
 	msgStr := fmt.Sprintf("%d %s were deposited to your account :moneybag:\n", int(amount), a.currencyString(int(amount), true))
@@ -410,7 +413,7 @@ func (a *app) processStellarPayment(ctx context.Context, payment operations.Paym
 func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error {
 	ctx = e.Annotate(ctx)
 	if e.Protocol != exportProtocolStellar {
-		return merr.New("unknown export protocol", a.cmp.Context(), ctx)
+		return fmt.Errorf("unknown export protocol %q", e.Protocol)
 	}
 
 	mlog.From(a.cmp).Info("submitting stellar tx", ctx)
@@ -418,7 +421,8 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 	defer cancel()
 	res, err := a.stellar.client.SubmitTransactionXDR(ctx, e.ProtocolPayload)
 	if err != nil {
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("could not submit ExportInProgress payload %q as tx XDR: %w",
+			e.ProtocolPayload, err)
 	}
 
 	txLink := res.Links.Transaction.Href
@@ -429,7 +433,7 @@ func (a *app) processExport(ctx context.Context, e bank.ExportInProgress) error 
 		// if there is an error acking, don't message the user, it'll just cause
 		// them to potentially get a duplicate message when the export is
 		// retried later.
-		return merr.Wrap(err, a.cmp.Context(), ctx)
+		return fmt.Errorf("error acking ExportInProgress: %w", err)
 	}
 
 	imChannel, err := a.slackClient.getIMChannel(e.FromUserID)
@@ -528,7 +532,7 @@ func main() {
 			mlog.From(cmp).Info("starting thread to consume submitted exports", ctx)
 			for {
 				err := a.bank.ConsumeExports(runCtx, exportCh)
-				if merr.Base(err) == context.Canceled {
+				if errors.Is(err, context.Canceled) {
 					break
 				} else if err != nil {
 					mlog.From(cmp).Error("error consuming exports", ctx, merr.Context(err))

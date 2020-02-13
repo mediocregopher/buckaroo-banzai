@@ -4,13 +4,13 @@ package stellar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
 	"github.com/mediocregopher/mediocre-go-lib/mctx"
-	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/stellar/go/clients/federation"
@@ -22,18 +22,35 @@ import (
 	"github.com/stellar/go/txnbuild"
 )
 
-// FormatErr takes in an error returned by the stellar client, unpacks its
-// internal fields, and returns an error which is formatted to be more useful.
-//
-// If the error was not one returned by the stellar client it is returned as-is.
-func FormatErr(err error) error {
+type horizonErr struct {
+	err error
+}
+
+// HorizonErr wraps an error from the horizonclient so that its formatted string
+// is a bit more useful.
+func HorizonErr(err error) error {
+	if err == nil {
+		return nil
+	} else if errors.As(err, &horizonErr{}) {
+		return err
+	}
+	return horizonErr{err}
+}
+
+// Unwrap returns the underlying Err instance.
+func (fe horizonErr) Unwrap() error {
+	return fe.err
+}
+
+func (fe horizonErr) Error() string {
+	err := fe.Unwrap()
 	herr, ok := err.(*horizonclient.Error)
 	if !ok {
-		return err
+		return err.Error()
 	}
 
 	b, _ := json.Marshal(herr.Problem)
-	return fmt.Errorf("horizon ERR: %q - %s", herr.Problem.Title, b)
+	return fmt.Sprintf("horizon ERR: %q - %s", herr.Problem.Title, b)
 }
 
 // Client wraps a horizon client for stellar.
@@ -93,7 +110,7 @@ func (c *Client) ResolveAddr(ctx context.Context, addr string) (string, string, 
 	mlog.From(c.cmp).Info("resolving stellar federation address", ctx)
 	res, err := c.FederationClient.LookupByAddress(addr)
 	if err != nil {
-		return "", "", merr.Wrap(err, c.cmp.Context(), ctx)
+		return "", "", fmt.Errorf("error looking up address with federation client: %w", err)
 	}
 	addr = res.AccountID
 	ctx = mctx.Annotate(ctx, "addr", addr)
@@ -104,8 +121,7 @@ func (c *Client) ResolveAddr(ctx context.Context, addr string) (string, string, 
 	} else if res.MemoType == "text" {
 		memo = res.Memo.Value
 	} else {
-		return "", "", merr.New("unsupported memo type", c.cmp.Context(),
-			mctx.Annotate(ctx, "memoType", res.MemoType))
+		return "", "", fmt.Errorf("unsupported memo type: %q", res.MemoType)
 	}
 
 	return addr, memo, nil
@@ -121,11 +137,10 @@ func (c *Client) SubmitTransactionXDR(ctx context.Context, txXDR string) (Transa
 	ctx = mctx.Annotate(ctx, "txXDR", txXDR)
 	mlog.From(c.cmp).Info("submitting transaction", ctx)
 	txRes, err := c.Client.SubmitTransactionXDR(txXDR)
-	if err == nil {
-		return txRes, err
+	if err != nil {
+		return txRes, HorizonErr(err)
 	}
-
-	return txRes, merr.Wrap(FormatErr(err), c.cmp.Context(), ctx)
+	return txRes, nil
 }
 
 // SendOpts describe the various options which can be sent into the Send method.
@@ -161,7 +176,7 @@ func (opts SendOpts) annotate(ctx context.Context) context.Context {
 func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error) {
 	addr, memo, err := c.ResolveAddr(ctx, opts.To)
 	if err != nil {
-		return "", merr.Wrap(err, c.cmp.Context(), ctx)
+		return "", fmt.Errorf("error resolving address %q: %w", opts.To, err)
 	}
 	opts.To = addr
 	if memo != "" {
@@ -174,7 +189,7 @@ func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error)
 		AccountID: opts.From.Address(),
 	})
 	if err != nil {
-		return "", merr.Wrap(err, c.cmp.Context(), ctx)
+		return "", fmt.Errorf("error getting account detail: %w", err)
 	}
 
 	asset := txnbuild.CreditAsset{
@@ -208,7 +223,7 @@ func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error)
 
 	txXDR, err := tx.BuildSignEncode(opts.From)
 	if err != nil {
-		return "", merr.Wrap(err, c.cmp.Context(), ctx)
+		return "", fmt.Errorf("error performing BuildSignEncode: %w", err)
 	}
 	return txXDR, nil
 }
@@ -218,7 +233,7 @@ func (c *Client) MakeSendXDR(ctx context.Context, opts SendOpts) (string, error)
 func (c *Client) Send(ctx context.Context, opts SendOpts) (TransactionResult, error) {
 	txXDR, err := c.MakeSendXDR(ctx, opts)
 	if err != nil {
-		return TransactionResult{}, merr.Wrap(err, c.cmp.Context(), ctx)
+		return TransactionResult{}, fmt.Errorf("error making Send XDR: %w", err)
 	}
 
 	return c.SubmitTransactionXDR(ctx, txXDR)
@@ -230,14 +245,17 @@ func (c *Client) Send(ctx context.Context, opts SendOpts) (TransactionResult, er
 func LoadKeyPair(seed string) (*keypair.Full, error) {
 	seedB, err := strkey.Decode(strkey.VersionByteSeed, seed)
 	if err != nil {
-		return nil, merr.Wrap(err)
+		return nil, fmt.Errorf("could not decode seed: %w", err)
 	} else if len(seedB) != 32 {
-		return nil, merr.New("invalid seed string")
+		return nil, fmt.Errorf("invalid seed string, length is %d (should be 32)", len(seedB))
 	}
 	var seedB32 [32]byte
 	copy(seedB32[:], seedB)
 	pair, err := keypair.FromRawSeed(seedB32)
-	return pair, merr.Wrap(err)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse raw seed: %w", err)
+	}
+	return pair, nil
 }
 
 // InstKeyPair instantiates a keypair onto the given Component. The keypair will
@@ -251,7 +269,7 @@ func InstKeyPair(cmp *mcmp.Component) *keypair.Full {
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		pair, err := LoadKeyPair(*seedStr)
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("could not load key pair from seed string: %w", err)
 		}
 		*kp = *pair
 

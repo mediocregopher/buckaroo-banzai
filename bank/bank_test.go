@@ -1,6 +1,7 @@
 package bank
 
 import (
+	"errors"
 	. "testing"
 
 	"github.com/mediocregopher/mediocre-go-lib/mrand"
@@ -23,7 +24,7 @@ func TestPersistentBank(t *T) {
 	assertIncr := func(userID string, by int, expBalance int) massert.Assertion {
 		newBalance, err := bank.Incr(userID, by)
 		if expBalance < 0 {
-			return massert.Equal(true, IsNotEnoughFunds(err))
+			return massert.Equal(true, errors.Is(err, ErrNotEnoughFunds))
 		}
 		return massert.All(
 			massert.Nil(err),
@@ -34,7 +35,7 @@ func TestPersistentBank(t *T) {
 	assertTransfer := func(to, from string, amount int, expDstBalance, expSrcBalance int) massert.Assertion {
 		newDstBalance, newSrcBalance, err := bank.Transfer(to, from, amount)
 		if expDstBalance < 0 || expSrcBalance < 0 {
-			return massert.Equal(true, IsNotEnoughFunds(err))
+			return massert.Equal(true, errors.Is(err, ErrNotEnoughFunds))
 		}
 		return massert.All(
 			massert.Nil(err),

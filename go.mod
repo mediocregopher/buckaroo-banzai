@@ -1,6 +1,6 @@
 module buckaroo-banzai
 
-go 1.12
+go 1.13
 
 require (
 	github.com/ajg/form v1.5.1 // indirect
@@ -9,6 +9,7 @@ require (
 	github.com/gavv/monotime v0.0.0-20190418164738-30dba4353424 // indirect
 	github.com/go-errors/errors v1.0.1 // indirect
 	github.com/gorilla/websocket v1.4.0 // indirect
+	github.com/imkira/go-interpol v1.1.0 // indirect
 	github.com/jarcoal/httpmock v1.0.4 // indirect
 	github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 	github.com/lusis/go-slackbot v0.0.0-20180109053408-401027ccfef5 // indirect
@@ -36,6 +37,7 @@ require (
 	github.com/yudai/gojsondiff v1.0.0 // indirect
 	github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 // indirect
 	github.com/yudai/pp v2.0.1+incompatible // indirect
+	golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 // indirect
 	gopkg.in/gavv/httpexpect.v1 v1.0.0 // indirect
 )
 

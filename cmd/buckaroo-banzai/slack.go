@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
-	"github.com/mediocregopher/mediocre-go-lib/mctx"
-	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/nlopes/slack"
@@ -77,10 +77,12 @@ func (sc *slackClient) getChannel(id string) (*slack.Channel, error) {
 		return channel, nil
 	}
 	channel, err := sc.Client.GetConversationInfo(id, true)
-	if err == nil {
-		sc.channels[id] = channel
+	if err != nil {
+		return nil, err
 	}
-	return channel, merr.Wrap(err, sc.cmp.Context())
+
+	sc.channels[id] = channel
+	return channel, nil
 }
 
 func (sc *slackClient) getUser(id string) (*slack.User, error) {
@@ -95,10 +97,11 @@ func (sc *slackClient) getUser(id string) (*slack.User, error) {
 	}
 
 	user, err := sc.Client.GetUserInfo(id)
-	if err == nil {
-		sc.users[id] = user
+	if err != nil {
+		return nil, err
 	}
-	return user, merr.Wrap(err, sc.cmp.Context())
+	sc.users[id] = user
+	return user, nil
 }
 
 func (sc *slackClient) refreshUsersByName(lock bool) error {
@@ -109,7 +112,7 @@ func (sc *slackClient) refreshUsersByName(lock bool) error {
 
 	users, err := sc.Client.GetUsers()
 	if err != nil {
-		return merr.Wrap(err, sc.cmp.Context())
+		return fmt.Errorf("error getting all slack users: %w", err)
 	}
 
 	sc.usersByName = make(map[string]*slack.User, len(users))
@@ -127,12 +130,11 @@ func (sc *slackClient) getUserByName(name string) (*slack.User, error) {
 	if ok {
 		return user, nil
 	} else if err := sc.refreshUsersByName(false); err != nil {
-		return nil, merr.Wrap(err, sc.cmp.Context())
+		return nil, fmt.Errorf("error refreshing users by name: %w", err)
 	}
 	user, ok = sc.usersByName[name]
 	if !ok {
-		return nil, merr.New("user not found",
-			mctx.Annotate(sc.cmp.Context(), "user", user))
+		return nil, errors.New("user not found")
 	}
 	return user, nil
 }
@@ -148,7 +150,7 @@ func (sc *slackClient) getIMChannel(userID string) (string, error) {
 
 	_, _, channel, err := sc.Client.OpenIMChannel(userID)
 	if err != nil {
-		return "", merr.Wrap(err, sc.cmp.Context())
+		return "", err
 	}
 
 	sc.ims[userID] = channel

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/mediocregopher/mediocre-go-lib/mcfg"
 	"github.com/mediocregopher/mediocre-go-lib/mcmp"
 	"github.com/mediocregopher/mediocre-go-lib/mctx"
-	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/mediocre-go-lib/mlog"
 	"github.com/mediocregopher/mediocre-go-lib/mrun"
 	"github.com/stellar/go/clients/horizonclient"
@@ -37,7 +37,7 @@ func cmdGen(cmp *mcmp.Component) {
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		pair, err := keypair.Random()
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error generating random keypair: %w", err)
 		}
 
 		mlog.From(cmp).Info("keypair generated", mctx.Annotate(ctx,
@@ -56,14 +56,14 @@ func cmdDump(cmp *mcmp.Component) {
 		mcfg.ParamUsage("Addr to dump all information about (mutually exclusive with -seed)"))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		if (*seed == "" && *addr == "") || (*seed != "" && *addr != "") {
-			return merr.New("Exactly one of --seed and --addr should be given", cmp.Context(), ctx)
+			return errors.New("Exactly one of --seed and --addr should be given")
 		}
 
 		var accountReq horizonclient.AccountRequest
 		if *seed != "" {
 			pair, err := stellar.LoadKeyPair(*seed)
 			if err != nil {
-				return merr.Wrap(err, cmp.Context(), ctx)
+				return fmt.Errorf("error loading keypair from seed (REDACTED): %w", err)
 			}
 			accountReq.AccountID = pair.Address()
 		} else {
@@ -74,7 +74,8 @@ func cmdDump(cmp *mcmp.Component) {
 		mlog.From(cmp).Info("loading account details", ctx)
 		detail, err := client.AccountDetail(accountReq)
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error loading account details with req %+v: %w",
+				accountReq, stellar.HorizonErr(err))
 		}
 
 		jsonDump(detail)
@@ -91,7 +92,8 @@ func cmdFund(cmp *mcmp.Component) {
 		mlog.From(cmp).Info("funding account", ctx)
 		res, err := client.Fund(*addr)
 		if err != nil {
-			return merr.Wrap(stellar.FormatErr(err), cmp.Context(), ctx)
+			return fmt.Errorf("error funding account %q: %w",
+				*addr, stellar.HorizonErr(err))
 		}
 		jsonDump(res)
 		return nil
@@ -106,7 +108,7 @@ func cmdResolve(cmp *mcmp.Component) {
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		res, err := client.FederationClient.LookupByAddress(*name)
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error looking up address for %q: %w", *name, err)
 		}
 		jsonDump(res)
 		return nil
@@ -130,7 +132,8 @@ func cmdTrust(cmp *mcmp.Component) {
 			AccountID: pair.Address(),
 		})
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error getting account detail of %q: %w",
+				pair.Address(), stellar.HorizonErr(err))
 		}
 
 		ctx = mctx.Annotate(ctx, "assetCode", *assetCode)
@@ -152,14 +155,14 @@ func cmdTrust(cmp *mcmp.Component) {
 
 		txXDR, err := tx.BuildSignEncode(pair)
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error calling BuildSignEncode: %w", err)
 		}
 
 		txRes, err := client.SubmitTransactionXDR(ctx, txXDR)
 		jsonDump(txRes)
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(),
-				mctx.Annotate(ctx, "txXDR", txXDR))
+			return fmt.Errorf("error submitting transaction %q: %w",
+				txXDR, stellar.HorizonErr(err))
 		}
 		return nil
 	})
@@ -183,7 +186,7 @@ func cmdSend(cmp *mcmp.Component) {
 		mcfg.ParamUsage("Memo to attach to transaction. If --dst is a federated stellar address then this memo might get overwritten."))
 	mrun.InitHook(cmp, func(ctx context.Context) error {
 		if strings.ToUpper(*assetCode) != "XLM" && *assetIssuer == "" {
-			return merr.New("asset-issuer required for non-native asset", cmp.Context(), ctx)
+			return errors.New("asset-issuer required for non-native asset")
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -198,7 +201,7 @@ func cmdSend(cmp *mcmp.Component) {
 		cancel()
 
 		if err != nil {
-			return merr.Wrap(err, cmp.Context(), ctx)
+			return fmt.Errorf("error sending: %w", stellar.HorizonErr(err))
 		}
 		jsonDump(txRes)
 		return nil

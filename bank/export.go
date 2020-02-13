@@ -3,11 +3,11 @@ package bank
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"github.com/mediocregopher/mediocre-go-lib/mctx"
 	"github.com/mediocregopher/mediocre-go-lib/mdb/mredis"
-	"github.com/mediocregopher/mediocre-go-lib/merr"
 	"github.com/mediocregopher/radix/v3"
 )
 
@@ -93,7 +93,7 @@ var submitExportCmd = radix.NewEvalScript(2, `
 	local srcBalance = tonumber(redis.call("HGET", KEYS[1], ARGV[1]))
 	if not srcBalance then srcBalance = 0 end
 	if srcBalance < toTransfer then
-		return redis.error_reply("`+notEnoughFundsStr+`")
+		return redis.error_reply("`+ErrNotEnoughFunds.Error()+`")
 	end
 
 	redis.call("HINCRBY", KEYS[1], ARGV[1], -1*toTransfer)
@@ -102,13 +102,12 @@ var submitExportCmd = radix.NewEvalScript(2, `
 
 func (b *redisBank) SubmitExport(e Export) (string, error) {
 	if e.Amount <= 0 {
-		return "", merr.New("Export.Amount must be a positive number",
-			mctx.Annotate(b.cmp.Context(), "amount", e.Amount))
+		return "", fmt.Errorf("malformed Export.Amount: %d", e.Amount)
 	}
 
 	exportJSON, err := json.Marshal(e)
 	if err != nil {
-		return "", merr.Wrap(err, b.cmp.Context())
+		return "", fmt.Errorf("could not marshal Export %+v: %w", e, err)
 	}
 
 	var id radix.StreamEntryID
@@ -116,7 +115,11 @@ func (b *redisBank) SubmitExport(e Export) (string, error) {
 		&id, b.balancesKey(), b.exportsKey(), e.FromUserID,
 		strconv.Itoa(e.Amount), string(exportJSON),
 	))
-	return id.String(), merr.Wrap(err, b.cmp.Context())
+	err = translateRedisErr(err)
+	if err != nil {
+		return "", fmt.Errorf("error performing export command in redis: %w", err)
+	}
+	return id.String(), nil
 }
 
 func (b *redisBank) ConsumeExports(ctx context.Context, ch chan<- ExportInProgress) error {
@@ -133,12 +136,12 @@ func (b *redisBank) ConsumeExports(ctx context.Context, ch chan<- ExportInProgre
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return merr.Wrap(err, b.cmp.Context(), ctx)
+			return ctx.Err()
 		}
 
 		entry, ok, err := reader.Next()
 		if err != nil {
-			return merr.Wrap(err, b.cmp.Context(), ctx)
+			return fmt.Errorf("error consuming next Export from stream: %w", err)
 		} else if !ok {
 			continue
 		}
@@ -146,16 +149,14 @@ func (b *redisBank) ConsumeExports(ctx context.Context, ch chan<- ExportInProgre
 		exportJSONStr := entry.Fields["json"]
 		var export Export
 		if err := json.Unmarshal([]byte(exportJSONStr), &export); err != nil {
-			return merr.Wrap(err, b.cmp.Context(), ctx)
+			return fmt.Errorf("error unmarshaling Export %q: %w", exportJSONStr, err)
 		}
 
 		id := entry.ID.String()
 		ch <- ExportInProgress{
 			ID:     id,
 			Export: export,
-			Ack: func() error {
-				return merr.Wrap(entry.Ack(), b.cmp.Context(), ctx)
-			},
+			Ack:    entry.Ack,
 			Nack: func() error {
 				entry.Nack()
 				return nil
